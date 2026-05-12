@@ -3,7 +3,7 @@ const API = (typeof __API_URL__ !== "undefined")
   ? __API_URL__
   : (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
     ? "http://127.0.0.1:8000"
-    : "https://polyglotai-backend.onrender.com";  // ← replace with your Render URL after deploy
+    : "https://polyglot-ai-backed.onrender.com";  // ← replace with your Render URL after deploy
 
 // RTL languages — text direction flips automatically
 const RTL_LANGS = new Set(["Arabic", "Hebrew", "Urdu"]);
