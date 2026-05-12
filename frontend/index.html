@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PolyglotAI — Speech Translator</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+<!-- SPLASH -->
+<div class="splash" id="splash">
+  <div class="splash-bg-grid"></div>
+  <div class="splash-orbs">
+    <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
+  </div>
+
+  <!-- Floating language words -->
+  <div class="lang-floats" id="langFloats"></div>
+
+  <div class="splash-inner">
+    <!-- LEFT: Hero -->
+    <div class="splash-hero">
+      <div class="splash-badge">
+        <span class="badge-dot"></span>
+        Powered by Groq · Whisper · LLaMA 3.3
+      </div>
+
+      <h1 class="splash-title">
+        Speak in any language.<br/>
+        <span class="title-gradient">Understand everything.</span>
+      </h1>
+
+      <p class="splash-sub">
+        Real-time AI speech translation with live transcription,
+        multi-language support, and instant summaries.
+      </p>
+
+      <!-- Waveform animation -->
+      <div class="splash-wave">
+        <div class="sw-bar"></div><div class="sw-bar"></div><div class="sw-bar"></div>
+        <div class="sw-bar"></div><div class="sw-bar"></div><div class="sw-bar"></div>
+        <div class="sw-bar"></div><div class="sw-bar"></div><div class="sw-bar"></div>
+        <div class="sw-bar"></div><div class="sw-bar"></div><div class="sw-bar"></div>
+        <div class="sw-bar"></div><div class="sw-bar"></div><div class="sw-bar"></div>
+        <div class="sw-bar"></div><div class="sw-bar"></div><div class="sw-bar"></div>
+        <div class="sw-bar"></div><div class="sw-bar"></div>
+      </div>
+
+      <div class="splash-actions">
+        <button type="button" class="splash-btn" onclick="startApp()">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10a7 7 0 0 1-14 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          Start Translating
+        </button>
+        <div class="splash-langs-pill">
+          <span>40+ languages</span>
+          <span class="pill-sep">·</span>
+          <span>Real-time</span>
+          <span class="pill-sep">·</span>
+          <span>Free</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Feature cards -->
+    <div class="splash-features">
+      <div class="feat-card">
+        <div class="feat-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M20.49 9A9 9 0 1 1 3.51 15"/></svg>
+        </div>
+        <div class="feat-body">
+          <div class="feat-title">Live Translation</div>
+          <div class="feat-desc">Speak and see translations stream in real time, chunk by chunk</div>
+        </div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:rgba(29,158,117,0.12);color:#3dcba0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <div class="feat-body">
+          <div class="feat-title">File Upload</div>
+          <div class="feat-desc">Upload MP3, WAV, M4A or WebM — transcribe and translate instantly</div>
+        </div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:rgba(239,159,39,0.12);color:#ef9f27">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <div class="feat-body">
+          <div class="feat-title">AI Summaries</div>
+          <div class="feat-desc">Get concise AI-generated summaries of any audio with one click</div>
+        </div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:rgba(212,83,126,0.12);color:#d4537e">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div class="feat-body">
+          <div class="feat-title">Session History</div>
+          <div class="feat-desc">All sessions saved — sign in to sync across devices</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom strip -->
+  <div class="splash-strip">
+    <span>Hindi</span><span>Telugu</span><span>Tamil</span><span>Arabic</span>
+    <span>Japanese</span><span>French</span><span>Spanish</span><span>Korean</span>
+    <span>German</span><span>Chinese</span><span>Russian</span><span>Turkish</span>
+    <span>Hindi</span><span>Telugu</span><span>Tamil</span><span>Arabic</span>
+    <span>Japanese</span><span>French</span><span>Spanish</span><span>Korean</span>
+    <span>German</span><span>Chinese</span><span>Russian</span><span>Turkish</span>
+  </div>
+</div>
+
+<!-- AUTH MODAL -->
+<div class="auth-overlay" id="authOverlay" style="display:none">
+  <div class="auth-modal">
+    <div class="auth-logo">
+      <div class="auth-logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round">
+          <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+          <path d="M19 10a7 7 0 0 1-14 0"/>
+          <line x1="12" y1="17" x2="12" y2="21"/>
+          <line x1="8" y1="21" x2="16" y2="21"/>
+        </svg>
+      </div>
+      <div>
+        <div class="auth-logo-name">PolyglotAI</div>
+        <div class="auth-logo-sub">Sign in to save your history</div>
+      </div>
+    </div>
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab active" id="tabLogin" onclick="showAuthTab('login')">Sign In</button>
+      <button type="button" class="auth-tab" id="tabRegister" onclick="showAuthTab('register')">Create Account</button>
+    </div>
+    <div class="auth-form" id="formLogin">
+      <div class="auth-field"><label class="auth-label">Username</label><input class="auth-input" id="loginUsername" type="text" placeholder="your username" autocomplete="username"/></div>
+      <div class="auth-field"><label class="auth-label">Password</label><input class="auth-input" id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
+      <div class="auth-error" id="loginError"></div>
+      <button type="button" class="auth-btn" id="loginBtn" onclick="doLogin()"><span id="loginBtnText">Sign In</span><div class="auth-spinner" id="loginSpinner" style="display:none"></div></button>
+      <button type="button" class="auth-skip" onclick="skipAuth()">Continue without account</button>
+    </div>
+    <div class="auth-form" id="formRegister" style="display:none">
+      <div class="auth-field"><label class="auth-label">Display Name</label><input class="auth-input" id="regDisplayName" type="text" placeholder="Your Name"/></div>
+      <div class="auth-field"><label class="auth-label">Username</label><input class="auth-input" id="regUsername" type="text" placeholder="min 3 characters" autocomplete="username"/></div>
+      <div class="auth-field"><label class="auth-label">Password</label><input class="auth-input" id="regPassword" type="password" placeholder="min 6 characters" autocomplete="new-password"/></div>
+      <div class="auth-error" id="registerError"></div>
+      <button type="button" class="auth-btn" id="registerBtn" onclick="doRegister()"><span id="registerBtnText">Create Account</span><div class="auth-spinner" id="registerSpinner" style="display:none"></div></button>
+      <button type="button" class="auth-skip" onclick="skipAuth()">Continue without account</button>
+    </div>
+  </div>
+</div>
+
+<!-- APP -->
+<div class="app" id="app" style="display:none">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round">
+          <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+          <path d="M19 10a7 7 0 0 1-14 0"/>
+          <line x1="12" y1="17" x2="12" y2="21"/>
+          <line x1="8" y1="21" x2="16" y2="21"/>
+        </svg>
+      </div>
+      <div class="logo-text">
+        <div class="logo-name">PolyglotAI</div>
+        <div class="logo-sub">v3.0 · Groq</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <button type="button" class="nav-item active" id="nav-live" onclick="switchTab('live')">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"/><path d="M20.49 9A9 9 0 0 1 21 12a9 9 0 0 1-9 9 9 9 0 0 1-9-9 9 9 0 0 1 .51-3m3.03-3.88A9 9 0 0 1 12 3a9 9 0 0 1 6.46 2.72"/></svg>
+        </span>
+        <span class="nav-label">Live Translate</span>
+        <span class="nav-badge" id="liveBadge" style="display:none">LIVE</span>
+      </button>
+
+      <button type="button" class="nav-item" id="nav-file" onclick="switchTab('file')">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13z"/></svg>
+        </span>
+        <span class="nav-label">File Upload</span>
+      </button>
+
+      <button type="button" class="nav-item" id="nav-history" onclick="switchTab('history')">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+        </span>
+        <span class="nav-label">History</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <!-- User widget -->
+      <div class="user-widget" id="userWidget" style="display:none">
+        <div class="user-avatar" id="userAvatar">U</div>
+        <div class="user-info">
+          <div class="user-name" id="userDisplayName">User</div>
+          <div class="user-sub">Signed in</div>
+        </div>
+        <button type="button" class="user-logout" onclick="doLogout()" title="Sign out">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
+        </button>
+      </div>
+      <!-- Theme toggle -->
+      <button type="button" class="nav-item" id="themeBtn" onclick="toggleTheme()" title="Toggle theme">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>
+        </span>
+        <span class="nav-label">Toggle Theme</span>
+      </button>
+
+      <div class="sidebar-footer">
+        <div class="api-status">
+          <div class="status-dot" id="statusDot"></div>
+          <span id="statusText">Connecting…</span>
+        </div>
+        <div id="shortcutHint" class="shortcut-hint"></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="main-content">
+
+    <!-- ══════════ LIVE PAGE ══════════ -->
+    <div class="page active" id="page-live">
+      <div class="page-header">
+        <div class="page-title">
+          <span class="label-dot red"></span>
+          Live Translation
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="detected-lang" id="detectedLang"></span>
+          <span class="rec-badge" id="recBadge">Idle</span>
+        </div>
+      </div>
+
+      <div class="content-grid">
+        <!-- LEFT: MIC CONTROLS -->
+        <div class="control-panel">
+          <div class="mic-section">
+            <div class="mic-wrap">
+              <button type="button" class="mic-btn" id="micBtn" onclick="toggleLive()">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3zm-1 15.93V20H9v2h6v-2h-2v-2.07A8 8 0 0 0 20 10h-2a6 6 0 0 1-12 0H4a8 8 0 0 0 7 7.93z"/>
+                </svg>
+              </button>
+              <div class="mic-ring-outer" id="micRingOuter"></div>
+            </div>
+            <div class="mic-info">
+              <div class="mic-label" id="micLabel">Tap or press Space to start</div>
+              <div class="mic-timer" id="micTimer" style="display:none">00:00</div>
+            </div>
+          </div>
+
+          <div class="waveform" id="waveform">
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+
+          <div class="chunk-status" id="chunkStatus" style="display:none">
+            <div class="chunk-dot"></div>
+            <span id="chunkMsg">Processing chunk…</span>
+          </div>
+
+          <div class="vad-indicator" id="vadIndicator" style="display:none"></div>
+
+          <div class="divider"></div>
+
+          <div class="field-group">
+            <label class="field-label">Translate to</label>
+            <select class="select" id="liveLang" onchange="onLiveLangChange()">
+              <option value="English">English</option>
+              <optgroup label="Indian Languages">
+                <option>Hindi</option><option>Telugu</option><option>Tamil</option>
+                <option>Kannada</option><option>Malayalam</option><option>Bengali</option>
+                <option>Marathi</option><option>Gujarati</option><option>Punjabi</option><option>Urdu</option>
+              </optgroup>
+              <optgroup label="European">
+                <option>Spanish</option><option>French</option><option>German</option>
+                <option>Italian</option><option>Portuguese</option><option>Russian</option>
+              </optgroup>
+              <optgroup label="Asian">
+                <option>Japanese</option><option>Korean</option><option>Chinese (Simplified)</option>
+                <option>Thai</option><option>Vietnamese</option><option>Indonesian</option>
+              </optgroup>
+              <optgroup label="Middle East & Africa">
+                <option>Arabic</option><option>Hebrew</option><option>Turkish</option><option>Swahili</option>
+              </optgroup>
+            </select>
+          </div>
+
+
+        </div>
+
+        <!-- RIGHT: OUTPUT -->
+        <div class="output-area">
+          <div class="output-card">
+            <div class="output-card-head">
+              <span class="output-card-title"><span class="label-dot red"></span>Transcript</span>
+              <button type="button" class="icon-action" onclick="copyText('liveTranscriptContent')" title="Copy (Ctrl+C)">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>
+              </button>
+            </div>
+            <div class="output-card-body">
+              <div class="placeholder" id="liveTranscriptPh">Your speech will appear here…</div>
+              <div class="text-content" id="liveTranscriptContent"></div>
+            </div>
+          </div>
+
+          <div class="output-card grow">
+            <div class="output-card-head">
+              <span class="output-card-title"><span class="label-dot green"></span>Translation <span class="streaming-dot" id="streamingDot" style="display:none">●</span></span>
+              <div style="display:flex;gap:6px">
+                <button type="button" class="icon-action" onclick="copyText('liveTranslationContent')" title="Copy">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>
+                </button>
+                <!-- FIX #15: live tab export buttons -->
+                <button type="button" class="icon-action" onclick="downloadLiveTxt()" title="Download TXT">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zm-2 7l-3-3h2v-4h2v4h2l-3 3z"/></svg>
+                </button>
+                <button type="button" class="icon-action" onclick="downloadLivePDF()" title="Download PDF">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-8.5 7.5c0 .83-.67 1.5-1.5 1.5H9v2H7.5V7H10c.83 0 1.5.67 1.5 1.5v1zm5 2c0 .83-.67 1.5-1.5 1.5h-2.5V7H15c.83 0 1.5.67 1.5 1.5v3zm4-3H19v1h1.5V11H19v2h-1.5V7h3v1.5zM9 9.5h1v-1H9v1zM4 6H2v14a2 2 0 0 0 2 2h14v-2H4V6zm10 5.5h1v-3h-1v3z"/></svg>
+                </button>
+                <button type="button" class="icon-action danger" onclick="clearLive()" title="Clear (Esc)">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="progress-bar" id="liveProgress" style="display:none"><div class="progress-fill"></div></div>
+            <div class="output-card-body grow">
+              <div class="placeholder" id="liveTranslationPh">Translation streams here in real time…</div>
+              <div class="text-content large" id="liveTranslationContent"></div>
+            </div>
+          </div>
+
+          <div class="chunk-log">
+            <div class="chunk-log-head">Chunk log</div>
+            <div id="chunkLogItems"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ FILE PAGE ══════════ -->
+    <div class="page" id="page-file">
+      <div class="page-header">
+        <div class="page-title"><span class="label-dot purple"></span>File Translation</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="detected-lang" id="fileDetectedLang"></span>
+          <span class="rec-badge" id="fileBadge">Idle</span>
+        </div>
+      </div>
+
+      <div class="content-grid">
+        <!-- LEFT: FILE CONTROLS -->
+        <div class="control-panel">
+          <div class="drop-zone" id="dropZone"
+            ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)" onclick="onDropZoneClick(event)">
+            <input type="file" id="fileInput" accept="audio/*, .mp4" style="display:none" onchange="onFileSelect(event)" onclick="event.stopPropagation()"/>
+            <div class="drop-icon">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zm-2 7l-3-3h2v-4h2v4h2l-3 3z"/></svg>
+            </div>
+            <div class="drop-main" id="dropMain">Drop audio file or click to browse</div>
+            <div class="drop-sub">MP3 · WAV · M4A · WebM — max 25MB</div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="field-group">
+            <label class="field-label">Translate to</label>
+            <select class="select" id="fileLang" onchange="onFileLangChange()">
+              <optgroup label="Indian Languages">
+                <option>Hindi</option><option>Telugu</option><option>Tamil</option>
+                <option>Kannada</option><option>Malayalam</option><option>Bengali</option>
+                <option>Marathi</option><option>Gujarati</option><option>Punjabi</option><option>Urdu</option>
+              </optgroup>
+              <optgroup label="European">
+                <option>Spanish</option><option>French</option><option>German</option>
+                <option>Italian</option><option>Portuguese</option><option>Russian</option>
+              </optgroup>
+              <optgroup label="Asian">
+                <option>Japanese</option><option>Korean</option><option>Chinese (Simplified)</option>
+                <option>Thai</option><option>Vietnamese</option><option>Indonesian</option>
+              </optgroup>
+              <optgroup label="Middle East & Africa">
+                <option>Arabic</option><option>Hebrew</option><option>Turkish</option><option>Swahili</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">Include in results</label>
+            <div class="toggle-group">
+              <button type="button" class="toggle on" id="tog-transcript" onclick="toggleOption('transcript')">Transcript</button>
+              <button type="button" class="toggle on" id="tog-translation" onclick="toggleOption('translation')">Translation</button>
+              <button type="button" class="toggle" id="tog-summary" onclick="toggleOption('summary')">Summary</button>
+            </div>
+          </div>
+
+          <button type="button" class="btn-primary" id="processBtn" onclick="processFile()">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            Process File
+          </button>
+
+          <div class="download-group" id="downloadGroup" style="display:none">
+            <button type="button" class="btn-secondary" onclick="downloadTxt()">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zm-2 7l-3-3h2v-4h2v4h2l-3 3z"/></svg>
+              TXT
+            </button>
+            <button type="button" class="btn-secondary" onclick="downloadPDFFile()">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-8.5 7.5c0 .83-.67 1.5-1.5 1.5H9v2H7.5V7H10c.83 0 1.5.67 1.5 1.5v1zm5 2c0 .83-.67 1.5-1.5 1.5h-2.5V7H15c.83 0 1.5.67 1.5 1.5v3zm4-3H19v1h1.5V11H19v2h-1.5V7h3v1.5zM9 9.5h1v-1H9v1zM4 6H2v14a2 2 0 0 0 2 2h14v-2H4V6zm10 5.5h1v-3h-1v3z"/></svg>
+              PDF
+            </button>
+          </div>
+        </div>
+
+        <!-- RIGHT: RESULTS -->
+        <div class="output-area">
+          <div class="progress-bar" id="fileProgress" style="display:none"><div class="progress-fill"></div></div>
+          <div class="progress-msg" id="fileProgressMsg" style="display:none">Processing…</div>
+
+          <div class="results-body" id="resultsBody">
+            <div class="results-empty" id="resultsEmpty">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13z"/></svg>
+              <p>Upload a file and click Process</p>
+            </div>
+
+            <div class="result-card" id="card-transcript" style="display:none">
+              <div class="result-card-head">
+                <span>Transcript</span>
+                <button type="button" class="icon-action" onclick="copyText('res-transcript')">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>
+                </button>
+              </div>
+              <div class="result-card-body" id="res-transcript"></div>
+            </div>
+
+            <!-- Dynamic per-language translation cards appended here by JS -->
+            <div id="translations-container"></div>
+
+            <div class="result-card" id="card-summary" style="display:none">
+              <div class="result-card-head">
+                <span>AI Summary</span>
+                <button type="button" class="icon-action" onclick="copyText('res-summary')">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>
+                </button>
+              </div>
+              <div class="result-card-body" id="res-summary"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ HISTORY PAGE ══════════ -->
+    <div class="page" id="page-history">
+      <div class="page-header">
+        <div class="page-title"><span class="label-dot purple"></span>Session History</div>
+        <button type="button" class="icon-action danger" onclick="clearHistory()" title="Clear history">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+        </button>
+      </div>
+      <div class="history-login-nudge" id="historyLoginNudge" style="display:none">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+        <p>Sign in to sync history across devices</p>
+        <button type="button" class="auth-nudge-btn" onclick="showAuthOverlay()">Sign In / Register</button>
+      </div>
+      <div class="history-panel">
+        <div id="historyList"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="script.js"></script>
+</body>
+</html>
