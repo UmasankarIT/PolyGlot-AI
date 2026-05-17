@@ -1,4 +1,12 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+"""
+main.py — PolyglotAI API v5.1
+Changes from v5.0:
+  1. WebSocket real-time endpoint added (/ws/live)
+  2. Rate limiting added (slowapi) — protects Groq API key from abuse
+  3. WebSocket router imported from websocket_live.py
+"""
+
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -6,12 +14,21 @@ import os, base64, json, asyncio
 from dotenv import load_dotenv
 from pathlib import Path
 
+# ── Rate limiting ─────────────────────────────────────────────────
+# slowapi limits how many requests each IP can make per minute
+# This protects your Groq API key from being burned by bots or abuse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
+
 load_dotenv(Path(__file__).parent / ".env")
 
 from backend.services.transcribe import transcribe_audio
 from backend.services.translate import translate_text, translate_text_stream, is_hallucination
 from backend.services.summarize import summarize_text
-from backend.services.sentiment import analyze_sentiment          # NEW
+from backend.services.sentiment import analyze_sentiment
 from backend.services.translate import LANGUAGE_MAP
 from backend.auth import (
     init_db, get_current_user,
@@ -21,7 +38,15 @@ from backend.auth import (
     RegisterRequest, LoginRequest, HistoryEntry
 )
 
-app = FastAPI(title="PolyglotAI API", version="5.0.0")
+# ── Import WebSocket router ───────────────────────────────────────
+# This is the new real-time endpoint that replaces /live/chunk
+from backend.websocket_live import router as ws_router
+
+app = FastAPI(title="PolyglotAI API", version="5.1.0")
+
+# ── Attach rate limiter to app ────────────────────────────────────
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 _FRONTEND_URL = os.getenv("FRONTEND_URL", "")
 _ALLOWED_ORIGINS = [_FRONTEND_URL] if _FRONTEND_URL else ["*"]
@@ -33,6 +58,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Include WebSocket router ──────────────────────────────────────
+app.include_router(ws_router)
 
 ALLOWED_EXTS    = {"mp3", "wav", "m4a", "mp4", "webm", "ogg", "flac", "aac"}
 MAX_FILE_BYTES  = 25 * 1024 * 1024
@@ -105,7 +133,7 @@ def _validate_audio_upload(file: UploadFile, audio_bytes: bytes):
 # ── Health & Meta ─────────────────────────────────────────────────
 @app.get("/health")
 async def health():
-    return {"status": "ok", "message": "PolyglotAI API is running", "version": "5.0.0"}
+    return {"status": "ok", "message": "PolyglotAI API is running", "version": "5.1.0"}
 
 @app.get("/languages")
 async def languages():
@@ -114,7 +142,8 @@ async def languages():
 
 # ── Transcribe ────────────────────────────────────────────────────
 @app.post("/transcribe")
-async def transcribe(file: UploadFile = File(...)):
+@limiter.limit("20/minute")  # max 20 file transcriptions per minute per IP
+async def transcribe(request: Request, file: UploadFile = File(...)):
     audio_bytes = await file.read()
     _validate_audio_upload(file, audio_bytes)
     result = await transcribe_audio(audio_bytes, file.filename)
@@ -125,14 +154,16 @@ async def transcribe(file: UploadFile = File(...)):
 
 # ── Translate ─────────────────────────────────────────────────────
 @app.post("/translate")
-async def translate(req: TranslateRequest):
+@limiter.limit("60/minute")  # 60 translations per minute per IP
+async def translate(request: Request, req: TranslateRequest):
     if not req.text.strip():
         raise HTTPException(400, "Text cannot be empty")
     translation = await translate_text(req.text, req.target_language)
     return {"translation": translation}
 
 @app.post("/translate/stream")
-async def translate_stream(req: TranslateRequest):
+@limiter.limit("60/minute")
+async def translate_stream(request: Request, req: TranslateRequest):
     if not req.text.strip():
         raise HTTPException(400, "Text cannot be empty")
 
@@ -153,30 +184,30 @@ async def translate_stream(req: TranslateRequest):
 
 # ── Summarize ─────────────────────────────────────────────────────
 @app.post("/summarize")
-async def summarize(req: SummarizeRequest):
+@limiter.limit("15/minute")
+async def summarize(request: Request, req: SummarizeRequest):
     if not req.text.strip():
         raise HTTPException(400, "Text cannot be empty")
     summary = await summarize_text(req.text)
     return {"summary": summary}
 
 
-# ── Sentiment (NEW) ───────────────────────────────────────────────
+# ── Sentiment ─────────────────────────────────────────────────────
 @app.post("/sentiment")
-async def sentiment(req: SentimentRequest):
-    """
-    Analyze emotional tone of transcript or any text.
-    Returns: sentiment, score, confidence, emotion, intensity, key_phrases, summary.
-    Real-world uses: customer service QA, interview scoring, meeting tone analysis.
-    """
+@limiter.limit("20/minute")
+async def sentiment(request: Request, req: SentimentRequest):
     if not req.text.strip() or len(req.text.strip()) < 10:
         raise HTTPException(400, "Text too short for sentiment analysis (min 10 chars)")
     result = await analyze_sentiment(req.text)
     return result
 
 
-# ── Live chunk ────────────────────────────────────────────────────
+# ── Live chunk (HTTP fallback) ────────────────────────────────────
+# Kept for backwards compatibility.
+# New code uses /ws/live (WebSocket) instead — it's faster and has no gaps.
 @app.post("/live/chunk")
-async def live_chunk(req: LiveChunkRequest):
+@limiter.limit("30/minute")
+async def live_chunk(request: Request, req: LiveChunkRequest):
     try:
         audio_bytes = base64.b64decode(req.audio_b64)
     except Exception:
@@ -216,7 +247,9 @@ async def live_chunk(req: LiveChunkRequest):
 
 # ── Process all ───────────────────────────────────────────────────
 @app.post("/process")
+@limiter.limit("10/minute")
 async def process_all(
+    request: Request,
     file: UploadFile = File(...),
     target_language: str = "Hindi",
     include_summary: bool = False,
