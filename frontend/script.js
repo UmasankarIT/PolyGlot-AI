@@ -1,34 +1,43 @@
-// Switch API base: use VITE/env var if bundled, else auto-detect prod vs local
-const API = (typeof __API_URL__ !== "undefined")
-  ? __API_URL__
-  : (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
-    ? "http://127.0.0.1:8000"
-    : "https://polyglot-ai-backed.onrender.com";  // ← replace with your Render URL after deploy
+/* ════════════════════════════════════════════════════════════════
+   PolyglotAI v5.0 — Complete script.js
+   Fixed: Live translation, Conversation Mode, Sentiment AI
+   New:   Better UI, real-world features, robust error handling
+   ════════════════════════════════════════════════════════════════ */
 
-// RTL languages — text direction flips automatically
+// API base URL — auto-detects local vs production
+const API = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+  ? "http://127.0.0.1:8000"
+  : "https://polyglot-ai-backed.onrender.com";
+
 const RTL_LANGS = new Set(["Arabic", "Hebrew", "Urdu"]);
 
 /* ── State ─────────────────────────────────────────────────────── */
-let isLive           = false;
-let liveTimerInt     = null;
-let liveSecs         = 0;
-let chunkCounter     = 0;
-let waveInt          = null;
-let selectedFile     = null;
-let fileResults      = { transcript: "", translations: {}, summary: "" };
-let options          = { transcript: true, translation: true, summary: false };
-let liveTranscriptFull   = "";
-let liveTranslationFull  = "";
+let isLive            = false;
+let liveTimerInt      = null;
+let liveSecs          = 0;
+let chunkCounter      = 0;
+let waveInt           = null;
+let selectedFile      = null;
+let fileResults       = { transcript: "", translations: {}, summary: "" };
+let options           = { transcript: true, translation: true, summary: false, sentiment: false };
+let liveTranscriptFull    = "";
+let liveTranslationFull   = "";
 let liveTranscriptChunks  = [];
 let liveTranslationChunks = [];
-let currentTheme     = localStorage.getItem("theme") || "dark";
-// FIX #11: capture language at session start so mid-session changes don't corrupt slots
-let sessionLang      = "Hindi";
+let currentTheme      = localStorage.getItem("theme") || "dark";
+let sessionLang       = "Hindi";
+let recognition       = null;
+let speechSupported   = ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+let _healthInterval   = null;
+let _appLaunched      = false;
+let authToken         = localStorage.getItem("polyglot_token") || "";
+let currentUser       = JSON.parse(localStorage.getItem("polyglot_user") || "null");
 
-/* ── Boot ──────────────────────────────────────────────────────── */
+/* ════════════════════════════════════════════════════════════════
+   BOOT
+   ════════════════════════════════════════════════════════════════ */
 function startApp() {
   applyTheme(currentTheme);
-  fetchLanguages();
   const splash = document.getElementById("splash");
   splash.classList.add("hide");
   setTimeout(() => {
@@ -38,22 +47,16 @@ function startApp() {
   }, 550);
 }
 
-let _healthInterval = null;
-let _appLaunched = false;  // true once the app is fully visible — never switch tabs again after this
-
 function launchApp(defaultTab) {
-  const appEl = document.getElementById("app");
-
   document.getElementById("authOverlay").style.display = "none";
-  appEl.style.display = "flex";
+  document.getElementById("app").style.display = "flex";
   updateUserWidget();
   loadSessionHistory();
   checkHealth();
   if (!_healthInterval) _healthInterval = setInterval(checkHealth, 10000);
   registerKeyboardShortcuts();
   updateHistoryNudge();
-
-  // Only switch tabs on the very first launch — NEVER after that
+  initSplashWave();
   if (!_appLaunched) {
     _appLaunched = true;
     switchTab(defaultTab || "live");
@@ -65,55 +68,25 @@ async function checkHealth() {
   const txt = document.getElementById("statusText");
   try {
     const r = await fetch(`${API}/health`);
-    if (r.ok) { dot.className = "status-dot online"; txt.textContent = "Groq API · Online"; }
+    if (r.ok) { dot.className = "status-dot online"; txt.textContent = "Groq · Online"; }
     else       { dot.className = "status-dot offline"; txt.textContent = "API Error"; }
   } catch {
     dot.className = "status-dot offline"; txt.textContent = "Backend Offline";
   }
 }
 
-/* ── Languages from backend ────────────────────────────────────── */
-async function fetchLanguages() {
-  try {
-    const r    = await fetch(`${API}/languages`);
-    const data = await r.json();
-    populateLangSelects(data.languages);
-  } catch {
-    // fallback: keep hardcoded options already in HTML
-  }
-}
-
-function populateLangSelects(langs) {
-  const indian   = ["Hindi","Telugu","Tamil","Kannada","Malayalam","Bengali","Marathi","Gujarati","Punjabi","Urdu"];
-  const european = ["Spanish","French","German","Italian","Portuguese","Dutch","Russian","Polish","Swedish","Greek"];
-  const asian    = ["Japanese","Korean","Chinese (Simplified)","Thai","Vietnamese","Indonesian"];
-  const other    = ["Arabic","Hebrew","Turkish","Swahili"];
-
-  const groups = [
-    { label: "Indian Languages", items: indian },
-    { label: "European",         items: european },
-    { label: "Asian",            items: asian },
-    { label: "Middle East & Africa", items: other },
-  ];
-
-  ["liveLang","fileLang"].forEach(id => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    const current = sel.value;
-    sel.innerHTML = "";
-    groups.forEach(g => {
-      const og = document.createElement("optgroup");
-      og.label = g.label;
-      g.items.filter(l => langs.includes(l)).forEach(l => {
-        const opt = document.createElement("option");
-        opt.value = l; opt.textContent = l;
-        og.appendChild(opt);
-      });
-      if (og.children.length) sel.appendChild(og);
+/* ── Splash waveform animation ─────────────────────────────────── */
+function initSplashWave() {
+  const bars = document.querySelectorAll(".sdw-bar");
+  if (!bars.length) return;
+  setInterval(() => {
+    bars.forEach(b => {
+      b.style.height = (Math.random() * 28 + 4) + "px";
     });
-    sel.value = current;
-  });
+  }, 120);
 }
+// Also run on page load for splash
+setTimeout(initSplashWave, 100);
 
 /* ── Theme ─────────────────────────────────────────────────────── */
 function toggleTheme() {
@@ -123,43 +96,30 @@ function toggleTheme() {
 }
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
-  const btn = document.getElementById("themeBtn");
-  if (btn) btn.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
-}
-
-/* ── RTL support ───────────────────────────────────────────────── */
-// FIX #1: apply RTL to all translation output elements, including dynamic file cards
-function applyRTL(lang) {
-  const isRTL = RTL_LANGS.has(lang);
-  const dir   = isRTL ? "rtl" : "ltr";
-
-  // Live translation panel
-  const liveEl = document.getElementById("liveTranslationContent");
-  if (liveEl) { liveEl.dir = dir; liveEl.style.textAlign = isRTL ? "right" : "left"; }
-
-  // All dynamic file translation card bodies
-  document.querySelectorAll('[id^="res-trans-"]').forEach(el => {
-    el.dir = dir; el.style.textAlign = isRTL ? "right" : "left";
-  });
-}
-
-function onLiveLangChange() {
-  const lang = document.getElementById("liveLang").value;
-  applyRTL(lang);
-}
-function onFileLangChange() {
-  const lang = document.getElementById("fileLang").value;
-  applyRTL(lang);
 }
 
 /* ── Tab switching ─────────────────────────────────────────────── */
 function switchTab(name) {
-  console.log("[switchTab]", name, new Error().stack);
   document.querySelectorAll(".nav-item").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
-  document.getElementById("nav-" + name).classList.add("active");
-  document.getElementById("page-" + name).classList.add("active");
+  const navEl  = document.getElementById("nav-" + name);
+  const pageEl = document.getElementById("page-" + name);
+  if (navEl)  navEl.classList.add("active");
+  if (pageEl) pageEl.classList.add("active");
 }
+
+/* ── RTL ───────────────────────────────────────────────────────── */
+function applyRTL(lang) {
+  const isRTL = RTL_LANGS.has(lang);
+  const dir   = isRTL ? "rtl" : "ltr";
+  const liveEl = document.getElementById("liveTranslationContent");
+  if (liveEl) { liveEl.dir = dir; liveEl.style.textAlign = isRTL ? "right" : "left"; }
+  document.querySelectorAll('[id^="res-trans-"]').forEach(el => {
+    el.dir = dir; el.style.textAlign = isRTL ? "right" : "left";
+  });
+}
+function onLiveLangChange() { applyRTL(document.getElementById("liveLang").value); }
+function onFileLangChange() { applyRTL(document.getElementById("fileLang").value); }
 
 /* ── Keyboard shortcuts ────────────────────────────────────────── */
 let _shortcutsRegistered = false;
@@ -167,7 +127,6 @@ function registerKeyboardShortcuts() {
   if (_shortcutsRegistered) return;
   _shortcutsRegistered = true;
   document.addEventListener("keydown", e => {
-    // Auth modal Enter key
     const overlay = document.getElementById("authOverlay");
     if (overlay && overlay.style.display !== "none") {
       if (e.key === "Enter") {
@@ -178,40 +137,24 @@ function registerKeyboardShortcuts() {
       return;
     }
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-
-    if (e.code === "Space" && document.getElementById("page-live").classList.contains("active")) {
-      e.preventDefault();
-      toggleLive();
+    if (e.code === "Space" && document.getElementById("page-live")?.classList.contains("active")) {
+      e.preventDefault(); toggleLive();
     }
     if (e.code === "Escape") {
-      if (document.getElementById("page-live").classList.contains("active")) clearLive();
-      else clearFileResults();
-    }
-    if (e.ctrlKey && e.key === "c" && document.getElementById("page-live").classList.contains("active")) {
-      const el = document.getElementById("liveTranscriptContent");
-      if (el && el.textContent) {
-        e.preventDefault();
-        navigator.clipboard.writeText(el.textContent).then(() => toast("Transcript copied!", "success"));
-      }
+      if (document.getElementById("page-live")?.classList.contains("active")) clearLive();
     }
     if (e.ctrlKey && e.key === "1") { e.preventDefault(); switchTab("live"); }
-    if (e.ctrlKey && e.key === "2") { e.preventDefault(); switchTab("file"); }
+    if (e.ctrlKey && e.key === "2") { e.preventDefault(); switchTab("conversation"); }
+    if (e.ctrlKey && e.key === "3") { e.preventDefault(); switchTab("file"); }
   });
-
-  document.getElementById("shortcutHint").textContent = "Space=mic  Esc=clear  Ctrl+C=copy";
+  const hint = document.getElementById("shortcutHint");
+  if (hint) hint.textContent = "Space=mic · Esc=clear · Ctrl+1/2/3";
 }
 
 /* ════════════════════════════════════════════════════════════════
-   LIVE RECORDING — Web Speech API
-   Replaces the old MediaRecorder/Whisper chunk approach.
-   Browser handles real-time STT natively; we only call the backend
-   for translation (streaming SSE), keeping all existing UI intact.
+   LIVE TRANSLATION — Web Speech API (FIXED)
+   Works in Chrome/Edge. Each final sentence → streamed translation.
    ════════════════════════════════════════════════════════════════ */
-
-let recognition      = null;   // SpeechRecognition instance
-let speechSupported  = ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
-
-
 
 function toggleLive() {
   if (isLive) stopLive();
@@ -220,7 +163,7 @@ function toggleLive() {
 
 function startLive() {
   if (!speechSupported) {
-    toast("Web Speech API not supported — use Chrome or Edge", "error");
+    toast("Use Chrome or Edge for live translation", "error");
     return;
   }
 
@@ -235,12 +178,12 @@ function startLive() {
   document.getElementById("chunkLogItems").innerHTML = "";
   setLiveText("transcript", "");
   setLiveText("translation", "");
-  document.getElementById("detectedLang").textContent = "Listening…";
+  document.getElementById("detectedLang").textContent = `→ ${sessionLang}`;
 
-  document.getElementById("micBtn").classList.add("active");
+  const micBtn = document.getElementById("micBtn");
+  micBtn.classList.add("active");
   document.getElementById("micRingOuter").classList.add("pulse");
-  document.getElementById("micLabel").textContent = "Recording — Space or tap to stop";
-  document.getElementById("liveBadge").textContent = "LIVE";
+  document.getElementById("micLabel").textContent = "Listening… (Space or tap to stop)";
   document.getElementById("liveBadge").style.display = "inline-flex";
   document.getElementById("recBadge").textContent = "Live";
   document.getElementById("recBadge").className = "rec-badge live";
@@ -261,17 +204,11 @@ function startLive() {
 function _startRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SpeechRecognition();
-
-  // continuous = keep listening across pauses; interim = show live text
   recognition.continuous      = true;
   recognition.interimResults  = true;
   recognition.maxAlternatives = 1;
+  recognition.lang            = "en-US";
 
-  // Use the target language as the speech input language for Indian languages;
-  // fall back to English for European/other targets
-  recognition.lang = "en-US";  // Web Speech API — Chrome only reliably supports English
-
-  // Show interim (in-progress) results as greyed hint
   let interimEl = null;
 
   recognition.onresult = (event) => {
@@ -284,7 +221,6 @@ function _startRecognition() {
 
         chunkCounter++;
         const num       = chunkCounter;
-        // Always read the CURRENT dropdown value — not the snapshotted sessionLang
         const lang      = document.getElementById("liveLang").value;
         const slotIndex = liveTranscriptChunks.length;
 
@@ -294,22 +230,23 @@ function _startRecognition() {
         setLiveText("transcript", liveTranscriptFull);
         addChunkLogEntry(num, text, "", slotIndex);
 
-        // Translate the finalised sentence via existing SSE stream
+        // Show sentiment button
+        const sentBtn = document.getElementById("liveSentimentBtn");
+        if (sentBtn) sentBtn.style.display = "flex";
+
+        // Translate via streaming SSE
         streamTranslation(text, lang, num, slotIndex);
 
-        // Remove interim display
         if (interimEl) { interimEl.remove(); interimEl = null; }
-
       } else {
         interim += result[0].transcript;
       }
     }
 
-    // Show interim text as a greyed-out preview below the transcript
     if (interim) {
       if (!interimEl) {
         interimEl = document.createElement("div");
-        interimEl.style.cssText = "color:var(--text3);font-style:italic;margin-top:4px;font-size:0.9em;";
+        interimEl.className = "live-interim";
         const txEl = document.getElementById("liveTranscriptContent");
         if (txEl) txEl.parentNode.appendChild(interimEl);
       }
@@ -320,30 +257,24 @@ function _startRecognition() {
   };
 
   recognition.onerror = (e) => {
-    // "no-speech" is normal silence — just restart quietly
     if (e.error === "no-speech") {
       if (isLive && recognition) _restartRecognition();
       return;
     }
     if (e.error === "not-allowed") {
-      toast("Microphone access denied", "error");
-      stopLive();
-      return;
+      toast("Microphone access denied — check browser permissions", "error");
+      stopLive(); return;
     }
-    console.warn("SpeechRecognition error:", e.error);
     if (isLive && recognition) _restartRecognition();
   };
 
   recognition.onend = () => {
-    // Only restart if still live AND recognition wasn't nulled by stopLive()
     if (isLive && recognition) _restartRecognition();
   };
 
   try {
     recognition.start();
-    document.getElementById("detectedLang").textContent = `Translating to: ${sessionLang}`;
   } catch (e) {
-    console.warn("Recognition start failed:", e);
     toast("Could not start microphone", "error");
     stopLive();
   }
@@ -357,13 +288,10 @@ function _restartRecognition() {
 }
 
 function stopLive() {
-  // Null out recognition FIRST so any pending onend/onerror callbacks bail immediately
   const rec = recognition;
   recognition = null;
   isLive = false;
-  if (rec) {
-    try { rec.stop(); } catch {}
-  }
+  if (rec) { try { rec.stop(); } catch {} }
   clearInterval(liveTimerInt);
   stopWave();
 
@@ -377,76 +305,60 @@ function stopLive() {
   document.getElementById("chunkStatus").style.display = "none";
   document.getElementById("detectedLang").textContent = "";
 
-  // Save history completely detached — no await, no side effects on UI
   if (liveTranscriptFull) setTimeout(() => saveSessionHistory(), 0);
 }
 
-/* ── SSE Streaming Translation ─────────────────────────────────── */
+/* ── Streaming SSE Translation ─────────────────────────────────── */
 async function streamTranslation(text, lang, chunkNum, slotIndex) {
+  const streamingDot = document.getElementById("streamingDot");
+  if (streamingDot) streamingDot.style.display = "inline";
+
   try {
     const res = await fetch(`${API}/translate/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, target_language: lang })
     });
-
     if (!res.ok || !res.body) return;
 
     const reader  = res.body.getReader();
     const decoder = new TextDecoder();
-    let buffer           = "";
+    let buffer = "";
     let chunkTranslation = "";
 
-    let timeoutId;
-    const resetTimeout = () => {
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => reader.cancel(), 15000);
-    };
-    resetTimeout();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
 
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        resetTimeout();
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop();
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const raw = line.slice(6).trim();
-
-          if (raw === "[DONE]") {
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const raw = line.slice(6).trim();
+        if (raw === "[DONE]") {
+          liveTranslationChunks[slotIndex] = chunkTranslation;
+          liveTranslationFull = liveTranslationChunks.filter(Boolean).join("\n");
+          setLiveText("translation", liveTranslationFull);
+          applyRTL(lang);
+          updateChunkLogTranslation(slotIndex, chunkTranslation);
+          if (streamingDot) streamingDot.style.display = "none";
+          return;
+        }
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.token) {
+            chunkTranslation += parsed.token;
             liveTranslationChunks[slotIndex] = chunkTranslation;
             liveTranslationFull = liveTranslationChunks.filter(Boolean).join("\n");
             setLiveText("translation", liveTranslationFull);
-            applyRTL(lang);
-            // FIX #4: update the chunk log entry with the completed translation
-            updateChunkLogTranslation(slotIndex, chunkTranslation);
-            clearTimeout(timeoutId);
-            return;
           }
-
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed.token) {
-              chunkTranslation += parsed.token;
-              liveTranslationChunks[slotIndex] = chunkTranslation;
-              liveTranslationFull = liveTranslationChunks.filter(Boolean).join("\n");
-              setLiveText("translation", liveTranslationFull);
-              applyRTL(lang);
-            }
-          } catch {}
-        }
+        } catch {}
       }
-    } finally {
-      clearTimeout(timeoutId);
     }
-
   } catch (e) {
-    console.warn(`streamTranslation chunk #${chunkNum} error:`, e);
+    console.warn("streamTranslation error:", e);
+    if (streamingDot) streamingDot.style.display = "none";
   }
 }
 
@@ -472,8 +384,6 @@ function setLiveText(type, text) {
   }
 }
 
-// FIX #4: chunk log entries store their slotIndex as a data attribute so
-// updateChunkLogTranslation can find and patch them
 function addChunkLogEntry(num, transcript, translation, slotIndex) {
   const log   = document.getElementById("chunkLogItems");
   const entry = document.createElement("div");
@@ -483,7 +393,7 @@ function addChunkLogEntry(num, transcript, translation, slotIndex) {
     <div class="chunk-num">#${num}</div>
     <div style="flex:1;min-width:0">
       <div class="chunk-entry-text">${escapeHtml(transcript)}</div>
-      <div class="chunk-entry-trans" data-trans></div>
+      <div class="chunk-entry-trans" data-trans style="color:var(--text3);font-size:11px;margin-top:2px">translating…</div>
     </div>`;
   log.prepend(entry);
 }
@@ -496,7 +406,8 @@ function updateChunkLogTranslation(slotIndex, translation) {
 }
 
 function showLiveProgress(on) {
-  document.getElementById("liveProgress").style.display = on ? "block" : "none";
+  const el = document.getElementById("liveProgress");
+  if (el) el.style.display = on ? "block" : "none";
 }
 
 function clearLive() {
@@ -506,9 +417,32 @@ function clearLive() {
   liveTranslationChunks = [];
   setLiveText("transcript",  "");
   setLiveText("translation", "");
-  document.getElementById("chunkLogItems").innerHTML = "";
-  document.getElementById("detectedLang").textContent = "";
+  const log = document.getElementById("chunkLogItems");
+  if (log) log.innerHTML = "";
+  const det = document.getElementById("detectedLang");
+  if (det) det.textContent = "";
   chunkCounter = 0;
+  const card = document.getElementById("liveSentimentCard");
+  if (card) { card.style.display = "none"; card.innerHTML = ""; }
+  const btn = document.getElementById("liveSentimentBtn");
+  if (btn) btn.style.display = "none";
+}
+
+/* ── Waveform ──────────────────────────────────────────────────── */
+function startWave() {
+  const wf = document.querySelector(".waveform");
+  if (wf) wf.classList.add("active");
+  waveInt = setInterval(() => {
+    document.querySelectorAll(".waveform span").forEach(b => {
+      b.style.height = (Math.random() * 22 + 4) + "px";
+    });
+  }, 110);
+}
+function stopWave() {
+  clearInterval(waveInt);
+  const wf = document.querySelector(".waveform");
+  if (wf) wf.classList.remove("active");
+  document.querySelectorAll(".waveform span").forEach(b => { b.style.height = "8px"; });
 }
 
 function copyText(id) {
@@ -518,31 +452,330 @@ function copyText(id) {
     .then(() => toast("Copied!", "success")).catch(() => {});
 }
 
-/* ── Waveform ──────────────────────────────────────────────────── */
-function startWave() {
-  document.querySelector(".waveform").classList.add("active");
-  waveInt = setInterval(() => {
-    document.querySelectorAll(".waveform span").forEach(b => {
-      b.style.height = (Math.random() * 22 + 4) + "px";
+/* ════════════════════════════════════════════════════════════════
+   SENTIMENT ANALYSIS
+   ════════════════════════════════════════════════════════════════ */
+
+const SENTIMENT_EMOJI = { positive: "😊", negative: "😟", neutral: "😐", mixed: "😶" };
+const EMOTION_EMOJI   = {
+  joy: "😄", anger: "😠", sadness: "😢", fear: "😰",
+  surprise: "😲", disgust: "🤢", neutral: "😐",
+  excitement: "🤩", frustration: "😤", calm: "😌"
+};
+const SENTIMENT_COLOR = {
+  positive: "#3dcba0", negative: "#e24b4a", neutral: "#9898aa", mixed: "#ef9f27"
+};
+
+let sentimentHistoryList = [];
+
+async function runSentiment() {
+  const text = document.getElementById("sentimentInput").value.trim();
+  if (!text || text.length < 10) { toast("Enter at least 10 characters", "error"); return; }
+
+  const btn = document.getElementById("sentimentBtn");
+  btn.disabled = true;
+  btn.textContent = "Analyzing…";
+  document.getElementById("sentimentEmpty").style.display = "none";
+  document.getElementById("sentimentResult").style.display = "none";
+
+  try {
+    const r = await fetch(`${API}/sentiment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
     });
-  }, 110);
-}
-function stopWave() {
-  clearInterval(waveInt);
-  document.querySelector(".waveform").classList.remove("active");
-  document.querySelectorAll(".waveform span").forEach(b => { b.style.height = "8px"; });
+    if (!r.ok) throw new Error(`Server error ${r.status}`);
+    const data = await r.json();
+    renderSentimentResult(data);
+    addSentimentHistory(text, data);
+    toast("Sentiment analyzed!", "success");
+  } catch (err) {
+    toast("Sentiment failed: " + err.message, "error");
+    document.getElementById("sentimentEmpty").style.display = "flex";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "😊 Analyze Sentiment";
+  }
 }
 
-/* ── Auth state ─────────────────────────────────────────────────── */
-let authToken   = localStorage.getItem("polyglot_token") || "";
-let currentUser = JSON.parse(localStorage.getItem("polyglot_user") || "null");
+function renderSentimentResult(data) {
+  const { sentiment, score, confidence, emotion, intensity, key_phrases, summary } = data;
 
-function authHeaders() {
-  return authToken ? { "Authorization": `Bearer ${authToken}` } : {};
+  document.getElementById("sentimentEmoji").textContent =
+    EMOTION_EMOJI[emotion] || SENTIMENT_EMOJI[sentiment] || "😐";
+  const labelEl = document.getElementById("sentimentLabelBig");
+  labelEl.textContent = sentiment.charAt(0).toUpperCase() + sentiment.slice(1);
+  labelEl.style.color = SENTIMENT_COLOR[sentiment] || "var(--text)";
+  document.getElementById("sentimentEmotionTag").textContent = emotion;
+
+  const scoreBar = document.getElementById("sentimentScoreBar");
+  const confBar  = document.getElementById("sentimentConfBar");
+  scoreBar.style.background = SENTIMENT_COLOR[sentiment] || "var(--purple)";
+  setTimeout(() => {
+    scoreBar.style.width = Math.round(score * 100) + "%";
+    confBar.style.width  = Math.round(confidence * 100) + "%";
+  }, 50);
+  document.getElementById("sentimentScoreVal").textContent = Math.round(score * 100) + "%";
+  document.getElementById("sentimentConfVal").textContent  = Math.round(confidence * 100) + "%";
+
+  const intensityEl = document.getElementById("sentimentIntensity");
+  intensityEl.textContent = intensity + " intensity";
+  intensityEl.className = `sentiment-intensity-badge intensity-${intensity}`;
+  document.getElementById("sentimentSummary").textContent = summary;
+
+  const phrasesEl = document.getElementById("sentimentPhrases");
+  const phraseList = document.getElementById("sentimentPhraseList");
+  if (key_phrases && key_phrases.length > 0) {
+    phraseList.innerHTML = key_phrases.map(p => `<span class="phrase-tag">${escapeHtml(p)}</span>`).join("");
+    phrasesEl.style.display = "block";
+  } else {
+    phrasesEl.style.display = "none";
+  }
+
+  document.getElementById("sentimentResult").style.display = "flex";
+}
+
+function addSentimentHistory(text, data) {
+  sentimentHistoryList.unshift({ text: text.slice(0, 60) + (text.length > 60 ? "…" : ""), data });
+  if (sentimentHistoryList.length > 5) sentimentHistoryList.pop();
+  const container = document.getElementById("sentimentHistoryItems");
+  container.innerHTML = sentimentHistoryList.map((item, i) => `
+    <div class="sentiment-history-item" onclick="loadSentimentHistory(${i})">
+      <span>${EMOTION_EMOJI[item.data.emotion] || "😐"}</span>
+      <span style="flex:1;font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(item.text)}</span>
+      <span style="font-size:11px;font-weight:600;color:${SENTIMENT_COLOR[item.data.sentiment]}">${item.data.sentiment}</span>
+    </div>
+  `).join("");
+}
+
+function loadSentimentHistory(i) {
+  const item = sentimentHistoryList[i];
+  if (!item) return;
+  document.getElementById("sentimentInput").value = item.text;
+  renderSentimentResult(item.data);
+}
+
+function loadLiveTranscript() {
+  const transcript = document.getElementById("liveTranscriptContent")?.textContent?.trim();
+  if (!transcript) { toast("No live transcript yet — start recording first", "error"); return; }
+  document.getElementById("sentimentInput").value = transcript;
+  switchTab("sentiment");
+  toast("Live transcript loaded!", "success");
+}
+
+async function analyzeLiveSentiment() {
+  const text = document.getElementById("liveTranscriptContent")?.textContent?.trim();
+  if (!text) { toast("No transcript to analyze", "error"); return; }
+
+  const card = document.getElementById("liveSentimentCard");
+  card.style.display = "block";
+  card.innerHTML = `<div style="padding:14px;color:var(--text3);font-size:13px">Analyzing emotion…</div>`;
+
+  try {
+    const r = await fetch(`${API}/sentiment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+    const data = await r.json();
+    const emoji = EMOTION_EMOJI[data.emotion] || "😐";
+    const color = SENTIMENT_COLOR[data.sentiment] || "var(--text)";
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;gap:14px;padding:14px 16px">
+        <span style="font-size:32px">${emoji}</span>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600;color:${color};text-transform:capitalize">${data.sentiment} · ${data.emotion}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px">${escapeHtml(data.summary)}</div>
+        </div>
+        <span style="font-size:20px;font-weight:700;color:${color}">${Math.round(data.score*100)}%</span>
+      </div>`;
+  } catch {
+    card.innerHTML = `<div style="padding:14px;color:var(--red);font-size:13px">Analysis failed</div>`;
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════
-   AUTH UI
+   CONVERSATION MODE
+   How it works:
+   - Person A taps mic → speaks in any language
+   - Web Speech API transcribes it
+   - Backend translates to Person B's chosen language
+   - Chat bubble shows what A said + translation B can read
+   - Then B taps mic → speaks → translated to A's language
+   Real-world: doctor/patient, tourist/local, business meetings
+   ════════════════════════════════════════════════════════════════ */
+
+let convState = {
+  isActive: false,
+  activeSpeaker: null,
+  recognition: null,
+  feed: []
+};
+
+function convToggle(speaker) {
+  if (convState.isActive && convState.activeSpeaker === speaker) {
+    convStop();
+  } else {
+    if (convState.isActive) convStop();
+    convStart(speaker);
+  }
+}
+
+function convStart(speaker) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    toast("Use Chrome or Edge for conversation mode", "error");
+    return;
+  }
+
+  convState.isActive      = true;
+  convState.activeSpeaker = speaker;
+
+  // Update UI
+  const btn   = document.getElementById(`convMic${speaker}`);
+  const label = document.getElementById(`convMicLabel${speaker}`);
+  if (btn) btn.classList.add("active");
+  if (label) label.textContent = "Listening…";
+
+  document.getElementById("convBadge").textContent = `Person ${speaker} speaking`;
+  document.getElementById("convBadge").className = "rec-badge live";
+  document.getElementById("convFeedEmpty").style.display = "none";
+
+  const rec = new SpeechRecognition();
+  rec.continuous      = false;
+  rec.interimResults  = true;
+  rec.lang            = "en-US";
+  convState.recognition = rec;
+
+  let interimDiv = null;
+
+  rec.onresult = async (event) => {
+    let interim = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const r = event.results[i];
+      if (r.isFinal) {
+        const text = r[0].transcript.trim();
+        if (!text) continue;
+        if (interimDiv) { interimDiv.remove(); interimDiv = null; }
+
+        const langA = document.getElementById("convLangA").value;
+        const langB = document.getElementById("convLangB").value;
+        // A speaks → translate to B's language (so B can read it)
+        // B speaks → translate to A's language (so A can read it)
+        const targetLang = speaker === "A" ? langB : langA;
+
+        const bubbleId = `conv-bubble-${Date.now()}`;
+        addConvBubble(speaker, text, bubbleId);
+        convState.feed.push({ speaker, transcript: text, translation: "", lang: targetLang });
+
+        try {
+          const resp = await fetch(`${API}/translate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, target_language: targetLang })
+          });
+          const d = await resp.json();
+          updateConvBubble(bubbleId, d.translation, targetLang);
+          convState.feed[convState.feed.length - 1].translation = d.translation;
+        } catch {
+          updateConvBubble(bubbleId, "Translation failed", targetLang);
+        }
+        convStop();
+      } else {
+        interim += r[0].transcript;
+      }
+    }
+
+    if (interim) {
+      if (!interimDiv) {
+        interimDiv = document.createElement("div");
+        interimDiv.className = `conv-interim conv-interim-${speaker.toLowerCase()}`;
+        document.getElementById("convFeed").appendChild(interimDiv);
+      }
+      interimDiv.textContent = interim + "…";
+    }
+  };
+
+  rec.onend   = () => { if (convState.isActive) convStop(); };
+  rec.onerror = (e) => {
+    if (e.error !== "no-speech") toast("Mic error: " + e.error, "error");
+    convStop();
+  };
+
+  try { rec.start(); } catch (e) {
+    toast("Could not start mic", "error");
+    convStop();
+  }
+}
+
+function convStop() {
+  convState.isActive = false;
+  if (convState.recognition) {
+    try { convState.recognition.stop(); } catch {}
+    convState.recognition = null;
+  }
+  convState.activeSpeaker = null;
+
+  ["A", "B"].forEach(s => {
+    const btn   = document.getElementById(`convMic${s}`);
+    const label = document.getElementById(`convMicLabel${s}`);
+    if (btn) btn.classList.remove("active");
+    if (label) label.textContent = "Tap to Speak";
+  });
+
+  const badge = document.getElementById("convBadge");
+  if (badge) { badge.textContent = "Idle"; badge.className = "rec-badge"; }
+}
+
+function addConvBubble(speaker, transcript, bubbleId) {
+  const feed = document.getElementById("convFeed");
+  const isA  = speaker === "A";
+  const div  = document.createElement("div");
+  div.id        = bubbleId;
+  div.className = `conv-bubble conv-bubble-${isA ? "a" : "b"}`;
+  div.innerHTML = `
+    <div class="conv-bubble-speaker">${isA ? "👤 Person A" : "👤 Person B"}</div>
+    <div class="conv-bubble-said">${escapeHtml(transcript)}</div>
+    <div class="conv-bubble-trans" id="${bubbleId}-trans">
+      <span style="opacity:0.5">translating…</span>
+    </div>`;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function updateConvBubble(bubbleId, translation, targetLang) {
+  const el = document.getElementById(`${bubbleId}-trans`);
+  if (el) el.innerHTML = `<span class="conv-trans-arrow">→ ${escapeHtml(targetLang)}:</span> ${escapeHtml(translation)}`;
+}
+
+function clearConversation() {
+  convState.feed = [];
+  document.getElementById("convFeed").innerHTML = `
+    <div class="conv-feed-empty" id="convFeedEmpty">
+      <div style="font-size:32px">💬</div>
+      <p>Press a mic button above to start the conversation</p>
+    </div>`;
+  toast("Conversation cleared", "success");
+}
+
+function downloadConversation() {
+  if (!convState.feed.length) { toast("No conversation to download", "error"); return; }
+  const langA = document.getElementById("convLangA").value;
+  const langB = document.getElementById("convLangB").value;
+  let out = `PolyglotAI Conversation\nPerson A reads: ${langA} | Person B reads: ${langB}\n${"─".repeat(50)}\n\n`;
+  convState.feed.forEach(item => {
+    out += `[Person ${item.speaker}] said:\n${item.transcript}\n`;
+    out += `→ Translated to ${item.lang}: ${item.translation}\n\n`;
+  });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([out], { type: "text/plain" }));
+  a.download = `polyglot_conversation_${Date.now()}.txt`;
+  a.click();
+  toast("Downloaded!", "success");
+}
+
+/* ════════════════════════════════════════════════════════════════
+   AUTH
    ════════════════════════════════════════════════════════════════ */
 
 function showAuthOverlay() {
@@ -558,23 +791,27 @@ function showAuthTab(tab) {
 }
 
 function clearAuthErrors() {
-  ["loginError", "registerError"].forEach(id => {
+  ["loginError","registerError"].forEach(id => {
     const el = document.getElementById(id);
-    el.style.display = "none"; el.textContent = ""; el.classList.remove("visible");
+    if (el) { el.style.display = "none"; el.textContent = ""; el.classList.remove("visible"); }
   });
 }
 
 function showAuthError(id, msg) {
   const el = document.getElementById(id);
-  el.textContent = msg; el.style.display = "block"; el.classList.add("visible");
+  if (el) { el.textContent = msg; el.style.display = "block"; el.classList.add("visible"); }
 }
 
 function setAuthLoading(form, loading) {
   const btnText = document.getElementById(form + "BtnText");
   const spinner = document.getElementById(form + "Spinner");
   const btn     = document.getElementById(form + "Btn");
-  if (loading) { btnText.style.display="none"; spinner.style.display="block"; btn.disabled=true; }
-  else         { btnText.style.display="block"; spinner.style.display="none"; btn.disabled=false; }
+  if (loading) { if(btnText) btnText.style.display="none"; if(spinner) spinner.style.display="block"; if(btn) btn.disabled=true; }
+  else         { if(btnText) btnText.style.display="block"; if(spinner) spinner.style.display="none"; if(btn) btn.disabled=false; }
+}
+
+function authHeaders() {
+  return authToken ? { "Authorization": `Bearer ${authToken}` } : {};
 }
 
 async function doLogin() {
@@ -611,7 +848,7 @@ async function doRegister() {
     if (!res.ok) { showAuthError("registerError", data.detail || "Registration failed"); return; }
     persistAuth(data);
     launchApp();
-    toast(`Account created! Welcome, ${data.display_name || data.username}!`, "success");
+    toast(`Welcome, ${data.display_name || data.username}!`, "success");
   } catch { showAuthError("registerError", "Could not reach server"); }
   finally   { setAuthLoading("register", false); }
 }
@@ -619,8 +856,7 @@ async function doRegister() {
 function skipAuth() { authToken = ""; currentUser = null; launchApp(); }
 
 function doLogout() {
-  authToken = ""; currentUser = null;
-  _appLaunched = false;  // reset so next login lands on correct tab
+  authToken = ""; currentUser = null; _appLaunched = false;
   localStorage.removeItem("polyglot_token");
   localStorage.removeItem("polyglot_user");
   updateUserWidget(); updateHistoryNudge(); renderHistory();
@@ -652,7 +888,7 @@ function updateHistoryNudge() {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   SESSION HISTORY — API-backed (localStorage fallback for guests)
+   HISTORY
    ════════════════════════════════════════════════════════════════ */
 
 async function _pushHistory(entry) {
@@ -670,35 +906,23 @@ async function _pushHistory(entry) {
     if (history.length > 20) history.splice(20);
     localStorage.setItem("polyglot_history", JSON.stringify(history));
   }
-  // Update history panel in background — don't block caller
   setTimeout(() => renderHistory(), 0);
 }
 
-// Called when live session ends
 async function saveSessionHistory() {
   if (!liveTranscriptFull) return;
   await _pushHistory({
-    date:        new Date().toLocaleString(),
-    lang:        sessionLang,
-    transcript:  liveTranscriptFull,
-    translation: liveTranslationFull,
-    duration:    liveSecs,
-    source:      "live",
-    filename:    ""
+    date: new Date().toLocaleString(), lang: sessionLang,
+    transcript: liveTranscriptFull, translation: liveTranslationFull,
+    duration: liveSecs, source: "live", filename: ""
   });
 }
 
-// Called after file processing completes
 async function saveFileHistory(filename, lang, transcript, translation) {
   if (!transcript) return;
   await _pushHistory({
-    date:        new Date().toLocaleString(),
-    lang:        lang,
-    transcript:  transcript,
-    translation: translation,
-    duration:    0,
-    source:      "file",
-    filename:    filename
+    date: new Date().toLocaleString(), lang, transcript, translation,
+    duration: 0, source: "file", filename
   });
 }
 
@@ -708,20 +932,18 @@ async function renderHistory() {
   const list = document.getElementById("historyList");
   if (!list) return;
   updateHistoryNudge();
-
   let history = [];
   if (authToken && currentUser) {
     try {
-      const res  = await fetch(`${API}/user/history`, { headers: authHeaders() });
-      if (res.status === 401) { history = []; }  // token expired — don't redirect, just show empty
-      else { const data = await res.json(); history = data.history || []; }
-    } catch { history = []; }
+      const res = await fetch(`${API}/user/history`, { headers: authHeaders() });
+      if (res.ok) { const data = await res.json(); history = data.history || []; }
+    } catch {}
   } else {
     history = JSON.parse(localStorage.getItem("polyglot_history") || "[]");
   }
 
   if (history.length === 0) {
-    list.innerHTML = `<div class="history-empty">No sessions yet</div>`;
+    list.innerHTML = `<div class="history-empty">No sessions yet — start recording or upload a file</div>`;
     return;
   }
 
@@ -734,12 +956,12 @@ async function renderHistory() {
         <span class="history-lang">${escapeHtml(s.lang)}</span>
         <span class="history-date">${escapeHtml(s.date)}</span>
         ${s.duration ? `<span class="history-dur">${Math.floor(s.duration/60)}m ${s.duration%60}s</span>` : ""}
-        ${s.source === "file"
-          ? `<span class="history-lang" style="background:rgba(29,158,117,0.12);color:var(--green2)">file</span>`
-          : `<span class="history-lang" style="background:rgba(226,75,74,0.1);color:var(--red)">live</span>`}
+        <span class="history-lang" style="${s.source==='file'?'background:rgba(29,158,117,0.12);color:var(--green2)':'background:rgba(226,75,74,0.1);color:var(--red)'}">
+          ${s.source==='file'?'📁 file':'🎙️ live'}
+        </span>
       </div>
-      ${s.filename ? `<div class="history-preview" style="color:var(--text3);font-size:11px">📁 ${escapeHtml(s.filename)}</div>` : ""}
-      <div class="history-preview">${escapeHtml((s.transcript||"").slice(0, 80))}${(s.transcript||"").length > 80 ? "…" : ""}</div>`;
+      ${s.filename?`<div style="font-size:11px;color:var(--text3);margin-bottom:3px">📁 ${escapeHtml(s.filename)}</div>`:""}
+      <div class="history-preview">${escapeHtml((s.transcript||"").slice(0,80))}${(s.transcript||"").length>80?"…":""}</div>`;
     div.addEventListener("click", () => loadHistoryEntry(s));
     list.appendChild(div);
   });
@@ -747,22 +969,20 @@ async function renderHistory() {
 
 function loadHistoryEntry(s) {
   if (s.source === "file") {
-    // Load file result back into the file tab — don't switch away
     switchTab("file");
-    fileResults = { transcript: s.transcript || "", translations: {}, summary: "" };
+    fileResults = { transcript: s.transcript||"", translations:{}, summary:"" };
     if (s.lang && s.translation) fileResults.translations[s.lang] = s.translation;
     hideAllCards();
     document.getElementById("translations-container").innerHTML = "";
-    document.getElementById("dropMain").textContent = s.filename ? `✓ ${s.filename}` : "Previous result";
+    document.getElementById("dropMain").textContent = s.filename?`✓ ${s.filename}`:"Previous result";
     document.getElementById("fileBadge").textContent = "Done";
-    document.getElementById("fileDetectedLang").textContent = "";
     document.getElementById("resultsEmpty").style.display = "none";
     document.getElementById("downloadGroup").style.display = "flex";
     if (fileResults.transcript) showCard("transcript", fileResults.transcript);
     Object.entries(fileResults.translations).forEach(([lang, text]) => {
       if (!text) return;
-      const cardId = `card-trans-${lang.replace(/\s|\(|\)/g, "_")}`;
-      const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g, "_")}`;
+      const cardId = `card-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
+      const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
       addTranslationCard(lang, cardId, bodyId);
       const el = document.getElementById(bodyId);
       if (el) el.textContent = text;
@@ -777,12 +997,12 @@ function loadHistoryEntry(s) {
     setLiveText("transcript",  liveTranscriptFull);
     setLiveText("translation", liveTranslationFull);
   }
-  toast(`Loaded session from ${s.date}`, "success");
+  toast(`Loaded from ${s.date}`, "success");
 }
 
 async function clearHistory() {
   if (authToken && currentUser) {
-    try { await fetch(`${API}/user/history`, { method: "DELETE", headers: authHeaders() }); } catch {}
+    try { await fetch(`${API}/user/history`, { method:"DELETE", headers: authHeaders() }); } catch {}
   } else {
     localStorage.removeItem("polyglot_history");
   }
@@ -790,143 +1010,38 @@ async function clearHistory() {
   toast("History cleared", "success");
 }
 
-/* ── PDF Export (live tab) ─────────────────────────────────────── */
-// FIX #15: wire up live tab PDF/TXT export
-function downloadLiveTxt() {
-  if (!liveTranscriptFull) { toast("Nothing to download", "error"); return; }
-  let out = "";
-  if (liveTranscriptFull)  out += `TRANSCRIPT:\n${liveTranscriptFull}\n\n`;
-  if (liveTranslationFull) out += `TRANSLATION (${sessionLang}):\n${liveTranslationFull}\n`;
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([out.trim()], { type: "text/plain" }));
-  a.download = `polyglot_live_${Date.now()}.txt`;
-  a.click();
-  toast("Downloaded TXT", "success");
-}
-
-function downloadLivePDF() {
-  if (!liveTranscriptFull) { toast("Nothing to download", "error"); return; }
-  downloadPDF({
-    transcript:   liveTranscriptFull,
-    translations: { [sessionLang]: liveTranslationFull },
-    summary:      ""
-  });
-}
-
-/* ── PDF Export (using jsPDF) ──────────────────────────────────── */
-async function downloadPDF(results) {
-  if (!window.jsPDF) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
-      s.onload  = resolve;
-      s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: "mm", format: "a4" });
-  const margin  = 20;
-  const pageW   = doc.internal.pageSize.getWidth();
-  const maxW    = pageW - margin * 2;
-  let y = margin;
-
-  doc.setFillColor(127, 119, 221);
-  doc.rect(0, 0, pageW, 14, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(11); doc.setFont("helvetica", "bold");
-  doc.text("PolyglotAI — Speech Translation Report", margin, 9);
-  doc.setTextColor(200, 200, 255);
-  doc.setFontSize(8); doc.setFont("helvetica", "normal");
-  doc.text(new Date().toLocaleString(), pageW - margin, 9, { align: "right" });
-
-  y = 24;
-  doc.setTextColor(30, 30, 30);
-
-  function addSection(title, body, color) {
-    if (!body) return;
-    doc.setFontSize(10); doc.setFont("helvetica", "bold");
-    doc.setTextColor(...color);
-    doc.text(title, margin, y); y += 5;
-    doc.setDrawColor(...color); doc.setLineWidth(0.3);
-    doc.line(margin, y, pageW - margin, y); y += 4;
-
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
-    doc.setTextColor(50, 50, 50);
-    const lines = doc.splitTextToSize(body, maxW);
-    lines.forEach(line => {
-      if (y > 270) { doc.addPage(); y = margin; }
-      doc.text(line, margin, y); y += 5;
-    });
-    y += 6;
-  }
-
-  addSection("Transcript", results.transcript, [127, 119, 221]);
-  Object.entries(results.translations || {}).forEach(([lang, text]) => {
-    addSection(`Translation (${lang})`, text, [29, 158, 117]);
-  });
-  addSection("AI Summary", results.summary, [239, 159, 39]);
-
-  doc.setFontSize(7); doc.setTextColor(150, 150, 150);
-  doc.text("Generated by PolyglotAI · Powered by Groq + Whisper + LLaMA", margin, 287);
-
-  doc.save(`polyglot_${Date.now()}.pdf`);
-  toast("PDF downloaded!", "success");
-}
-
 /* ════════════════════════════════════════════════════════════════
-   FILE UPLOAD
+   FILE UPLOAD & PROCESSING
    ════════════════════════════════════════════════════════════════ */
 
 function onDropZoneClick(e) {
-  // Don't reopen the file picker if the click came from the input itself
   if (e.target === document.getElementById("fileInput")) return;
-  // Don't reopen while actively processing
   const btn = document.getElementById("processBtn");
   if (btn && btn.disabled) return;
   document.getElementById("fileInput").click();
 }
-
-function onFileSelect(e) {
-  const f = e.target.files[0];
-  if (f) setSelectedFile(f);
-  // Reset so selecting the same file again still triggers onchange
-  e.target.value = "";
-}
-function onDragOver(e) {
-  e.preventDefault();
-  document.getElementById("dropZone").classList.add("drag-over");
-}
-function onDragLeave() {
-  document.getElementById("dropZone").classList.remove("drag-over");
-}
+function onFileSelect(e) { const f = e.target.files[0]; if (f) setSelectedFile(f); e.target.value = ""; }
+function onDragOver(e)  { e.preventDefault(); document.getElementById("dropZone").classList.add("drag-over"); }
+function onDragLeave()  { document.getElementById("dropZone").classList.remove("drag-over"); }
 function onDrop(e) {
   e.preventDefault();
   document.getElementById("dropZone").classList.remove("drag-over");
   const f = e.dataTransfer.files[0];
   if (f) setSelectedFile(f);
 }
-// allFileResults stores results per filename so switching files never loses data
+
 const allFileResults = {};
 
 function setSelectedFile(f) {
   selectedFile = f;
   document.getElementById("dropMain").textContent = `✓ ${f.name}`;
   document.getElementById("dropZone").classList.add("has-file");
-
-  // Restore saved results for this file, or start fresh
-  if (!allFileResults[f.name]) {
-    allFileResults[f.name] = { transcript: "", translations: {}, summary: "" };
-  }
+  if (!allFileResults[f.name]) allFileResults[f.name] = { transcript:"", translations:{}, summary:"" };
   fileResults = allFileResults[f.name];
-
-  // Rebuild the UI from whatever we already have for this file
   hideAllCards();
   document.getElementById("translations-container").innerHTML = "";
   document.getElementById("fileBadge").textContent = "Idle";
   document.getElementById("fileDetectedLang").textContent = "";
-
   if (fileResults.transcript) {
     showCard("transcript", fileResults.transcript);
     document.getElementById("resultsEmpty").style.display = "none";
@@ -936,22 +1051,21 @@ function setSelectedFile(f) {
     document.getElementById("resultsEmpty").style.display = "flex";
     document.getElementById("downloadGroup").style.display = "none";
   }
-
   Object.entries(fileResults.translations).forEach(([lang, text]) => {
     if (!text) return;
-    const cardId = `card-trans-${lang.replace(/\s|\(|\)/g, "_")}`;
-    const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g, "_")}`;
+    const cardId = `card-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
+    const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
     addTranslationCard(lang, cardId, bodyId);
     const el = document.getElementById(bodyId);
     if (el) el.textContent = text;
   });
-
   if (fileResults.summary) showCard("summary", fileResults.summary);
 }
 
 function toggleOption(key) {
   options[key] = !options[key];
-  document.getElementById("tog-" + key).classList.toggle("on", options[key]);
+  const btn = document.getElementById("tog-" + key);
+  if (btn) btn.classList.toggle("on", options[key]);
 }
 
 async function processFile() {
@@ -967,20 +1081,18 @@ async function processFile() {
   document.getElementById("fileBadge").textContent = "Processing…";
 
   const lang = document.getElementById("fileLang").value;
-  const needsTranscript = !fileResults.transcript;
 
   try {
-    if (needsTranscript) {
-      pmsg.textContent = "Transcribing with Whisper…";
+    if (!fileResults.transcript) {
+      pmsg.textContent = "🎙️ Transcribing with Whisper…";
       const fd = new FormData();
       fd.append("file", selectedFile);
-      const tr = await fetch(`${API}/transcribe`, { method: "POST", body: fd });
+      const tr = await fetch(`${API}/transcribe`, { method:"POST", body:fd });
       if (!tr.ok) throw new Error("Transcription failed");
       const trData = await tr.json();
       fileResults.transcript = trData.transcript;
-      if (trData.detected_language) {
+      if (trData.detected_language)
         document.getElementById("fileDetectedLang").textContent = `Detected: ${trData.detected_language.toUpperCase()}`;
-      }
     }
 
     const transcript = fileResults.transcript;
@@ -988,12 +1100,12 @@ async function processFile() {
 
     if (options.translation) {
       if (fileResults.translations[lang]) {
-        toast(`${lang} translation already done ✓`, "success");
+        toast(`${lang} already done ✓`, "success");
       } else {
         applyRTL(lang);
-        pmsg.textContent = `Translating to ${lang}…`;
-        const cardId = `card-trans-${lang.replace(/\s|\(|\)/g, "_")}`;
-        const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g, "_")}`;
+        pmsg.textContent = `🌐 Translating to ${lang}…`;
+        const cardId = `card-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
+        const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
         addTranslationCard(lang, cardId, bodyId);
         const translated = await streamFileTranslation(transcript, lang, bodyId);
         fileResults.translations[lang] = translated;
@@ -1004,10 +1116,9 @@ async function processFile() {
 
     if (options.summary) {
       if (!fileResults.summary) {
-        pmsg.textContent = "Summarizing with LLaMA 3.3…";
+        pmsg.textContent = "🧠 Summarizing with LLaMA…";
         const sr = await fetch(`${API}/summarize`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method:"POST", headers:{"Content-Type":"application/json"},
           body: JSON.stringify({ text: transcript })
         });
         if (!sr.ok) throw new Error("Summarization failed");
@@ -1017,12 +1128,41 @@ async function processFile() {
       showCard("summary", fileResults.summary);
     }
 
+    // Sentiment toggle support
+    if (options.sentiment && transcript) {
+      pmsg.textContent = "😊 Analyzing sentiment…";
+      try {
+        const sr = await fetch(`${API}/sentiment`, {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ text: transcript })
+        });
+        if (sr.ok) {
+          const sData = await sr.json();
+          const card = document.getElementById("card-sentiment-file");
+          const body = document.getElementById("res-sentiment-file");
+          if (card && body) {
+            const emoji = EMOTION_EMOJI[sData.emotion] || "😐";
+            const color = SENTIMENT_COLOR[sData.sentiment] || "var(--text)";
+            body.innerHTML = `
+              <div style="display:flex;align-items:center;gap:14px">
+                <span style="font-size:32px">${emoji}</span>
+                <div style="flex:1">
+                  <div style="font-weight:600;color:${color};text-transform:capitalize">${sData.sentiment} · ${sData.emotion}</div>
+                  <div style="font-size:12px;color:var(--text2);margin-top:3px">${escapeHtml(sData.summary)}</div>
+                  ${sData.key_phrases?.length ? `<div style="margin-top:8px">${sData.key_phrases.map(p=>`<span class="phrase-tag">${escapeHtml(p)}</span>`).join("")}</div>` : ""}
+                </div>
+                <span style="font-size:22px;font-weight:700;color:${color}">${Math.round(sData.score*100)}%</span>
+              </div>`;
+            card.style.display = "block";
+          }
+        }
+      } catch {}
+    }
+
     document.getElementById("downloadGroup").style.display = "flex";
     document.getElementById("fileBadge").textContent = "Done";
     toast("Done! ✓", "success");
-
-    // Save to history (file upload)
-    saveFileHistory(selectedFile.name, lang, fileResults.transcript, fileResults.translations[lang] || "");
+    saveFileHistory(selectedFile.name, lang, fileResults.transcript, fileResults.translations[lang]||"");
 
   } catch (err) {
     document.getElementById("resultsEmpty").textContent = "Error: " + err.message;
@@ -1039,14 +1179,12 @@ async function processFile() {
 function addTranslationCard(lang, cardId, bodyId) {
   if (document.getElementById(cardId)) return;
   const container = document.getElementById("translations-container");
-  const copyIcon = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>`;
   const card = document.createElement("div");
-  card.className = "result-card";
-  card.id = cardId;
+  card.className = "result-card"; card.id = cardId;
   card.innerHTML = `
     <div class="result-card-head">
       <span>Translation — ${escapeHtml(lang)}</span>
-      <button class="icon-action" onclick="copyText('${bodyId}')" title="Copy">${copyIcon}</button>
+      <button class="icon-action" onclick="copyText('${bodyId}')"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg></button>
     </div>
     <div class="result-card-body" id="${bodyId}"></div>`;
   container.appendChild(card);
@@ -1056,88 +1194,129 @@ async function streamFileTranslation(text, lang, bodyId) {
   return new Promise(async (resolve) => {
     try {
       const res = await fetch(`${API}/translate/stream`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ text, target_language: lang })
       });
       if (!res.ok) { resolve(""); return; }
-
       const reader  = res.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = "";
-      let full   = "";
-
+      let buffer = ""; let full = "";
       const el = document.getElementById(bodyId);
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop();
-
+        const lines = buffer.split("\n"); buffer = lines.pop();
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const raw = line.slice(6).trim();
           if (raw === "[DONE]") { resolve(full); return; }
           try {
             const parsed = JSON.parse(raw);
-            if (parsed.token) {
-              full += parsed.token;
-              if (el) el.textContent = full;
-            }
+            if (parsed.token) { full += parsed.token; if (el) el.textContent = full; }
           } catch {}
         }
       }
       resolve(full);
-    } catch {
-      resolve("");
-    }
+    } catch { resolve(""); }
   });
 }
 
 function showCard(type, text) {
-  document.getElementById("card-" + type).style.display = "block";
-  document.getElementById("res-" + type).textContent = text;
+  const card = document.getElementById("card-" + type);
+  const body = document.getElementById("res-" + type);
+  if (card) card.style.display = "block";
+  if (body) body.textContent = text;
 }
 
 function hideAllCards() {
-  ["transcript", "summary"].forEach(t => {
-    document.getElementById("card-" + t).style.display = "none";
-    document.getElementById("res-" + t).textContent = "";
+  ["transcript","summary"].forEach(t => {
+    const card = document.getElementById("card-" + t);
+    const body = document.getElementById("res-" + t);
+    if (card) card.style.display = "none";
+    if (body) body.textContent = "";
   });
+  const sentCard = document.getElementById("card-sentiment-file");
+  if (sentCard) sentCard.style.display = "none";
 }
 
 function clearFileResults() {
   hideAllCards();
-  fileResults = { transcript: "", translations: {}, summary: "" };
+  fileResults = { transcript:"", translations:{}, summary:"" };
   document.getElementById("translations-container").innerHTML = "";
-  document.getElementById("resultsEmpty").textContent = "Upload a file and click Process";
   document.getElementById("resultsEmpty").style.display = "flex";
   document.getElementById("downloadGroup").style.display = "none";
   document.getElementById("fileBadge").textContent = "Idle";
-  document.getElementById("fileDetectedLang").textContent = "";
 }
 
 /* ── Downloads ─────────────────────────────────────────────────── */
+function downloadLiveTxt() {
+  if (!liveTranscriptFull) { toast("Nothing to download", "error"); return; }
+  let out = "";
+  if (liveTranscriptFull)  out += `TRANSCRIPT:\n${liveTranscriptFull}\n\n`;
+  if (liveTranslationFull) out += `TRANSLATION (${sessionLang}):\n${liveTranslationFull}\n`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([out.trim()], { type:"text/plain" }));
+  a.download = `polyglot_live_${Date.now()}.txt`;
+  a.click();
+  toast("Downloaded TXT", "success");
+}
+
 function downloadTxt() {
-  if (!fileResults.transcript && !Object.keys(fileResults.translations).length) return;
   let out = "";
   if (fileResults.transcript) out += `TRANSCRIPT:\n${fileResults.transcript}\n\n`;
-  Object.entries(fileResults.translations).forEach(([lang, text]) => {
+  Object.entries(fileResults.translations).forEach(([lang,text]) => {
     if (text) out += `TRANSLATION (${lang}):\n${text}\n\n`;
   });
   if (fileResults.summary) out += `SUMMARY:\n${fileResults.summary}`;
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([out.trim()], { type: "text/plain" }));
+  a.href = URL.createObjectURL(new Blob([out.trim()], { type:"text/plain" }));
   a.download = `polyglot_${Date.now()}.txt`;
   a.click();
   toast("Downloaded TXT", "success");
 }
 
-function downloadPDFFile() {
-  if (!fileResults.transcript && !Object.keys(fileResults.translations).length) return;
-  downloadPDF(fileResults);
+function downloadPDFFile() { downloadPDF(fileResults); }
+function downloadLivePDF() {
+  downloadPDF({ transcript: liveTranscriptFull, translations: { [sessionLang]: liveTranslationFull }, summary: "" });
+}
+
+async function downloadPDF(results) {
+  if (!window.jsPDF) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:"mm", format:"a4" });
+  const margin = 20; const pageW = doc.internal.pageSize.getWidth(); const maxW = pageW - margin * 2;
+  let y = margin;
+  doc.setFillColor(127,119,221); doc.rect(0,0,pageW,14,"F");
+  doc.setTextColor(255,255,255); doc.setFontSize(11); doc.setFont("helvetica","bold");
+  doc.text("PolyglotAI — Speech Translation Report", margin, 9);
+  doc.setTextColor(200,200,255); doc.setFontSize(8); doc.setFont("helvetica","normal");
+  doc.text(new Date().toLocaleString(), pageW-margin, 9, { align:"right" });
+  y = 24; doc.setTextColor(30,30,30);
+  function addSection(title, body, color) {
+    if (!body) return;
+    doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...color);
+    doc.text(title, margin, y); y += 5;
+    doc.setDrawColor(...color); doc.setLineWidth(0.3); doc.line(margin, y, pageW-margin, y); y += 4;
+    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(50,50,50);
+    const lines = doc.splitTextToSize(body, maxW);
+    lines.forEach(line => { if (y > 270) { doc.addPage(); y = margin; } doc.text(line, margin, y); y += 5; });
+    y += 6;
+  }
+  addSection("Transcript", results.transcript, [127,119,221]);
+  Object.entries(results.translations||{}).forEach(([lang,text]) => addSection(`Translation (${lang})`, text, [29,158,117]));
+  addSection("AI Summary", results.summary, [239,159,39]);
+  doc.setFontSize(7); doc.setTextColor(150,150,150);
+  doc.text("Generated by PolyglotAI · Powered by Groq + Whisper + LLaMA", margin, 287);
+  doc.save(`polyglot_${Date.now()}.pdf`);
+  toast("PDF downloaded!", "success");
 }
 
 /* ── Toast ─────────────────────────────────────────────────────── */
@@ -1150,46 +1329,17 @@ function toast(msg, type = "") {
   toastTimeout = setTimeout(() => { el.className = "toast"; }, 3200);
 }
 
-
-/* ── Splash floating words ─────────────────────── */
-(function initSplashFloats() {
-  const words = [
-    "नमस्ते","こんにちは","안녕하세요","مرحبا","Bonjour","Hola","Ciao","Привет",
-    "你好","Hallo","مرحبا","สวัสดี","Xin chào","Olá","Merhaba","שלום",
-    "నమస్కారం","வணக்கம்","ನಮಸ್ಕಾರ","നമസ്കാരം"
-  ];
-  const container = document.getElementById("langFloats");
-  if (!container) return;
-  function spawnWord() {
-    const el = document.createElement("div");
-    el.className = "lf-word";
-    el.textContent = words[Math.floor(Math.random() * words.length)];
-    el.style.left = (10 + Math.random() * 80) + "%";
-    el.style.top  = (20 + Math.random() * 60) + "%";
-    el.style.animationDuration = (5 + Math.random() * 4) + "s";
-    el.style.animationDelay   = (Math.random() * 2) + "s";
-    container.appendChild(el);
-    setTimeout(() => el.remove(), 10000);
-  }
-  for (let i = 0; i < 6; i++) setTimeout(spawnWord, i * 600);
-  setInterval(spawnWord, 1800);
-})();
-function getSupportedMime() {
-  const types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg"];
-  return types.find(t => MediaRecorder.isTypeSupported(t)) || "";
+/* ── Utils ─────────────────────────────────────────────────────── */
+function escapeHtml(str) {
+  return (str || "")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
-
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result.split(",")[1]);
-    reader.onerror  = reject;
+    reader.onerror   = reject;
     reader.readAsDataURL(blob);
   });
-}
-
-function escapeHtml(str) {
-  return (str || "")
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
