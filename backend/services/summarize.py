@@ -1,7 +1,7 @@
 import os, asyncio
 from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from groq import Groq
 
 async def summarize_text(text: str) -> str:

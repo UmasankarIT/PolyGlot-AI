@@ -8,3 +8,8 @@ pydantic==2.9.2
 bcrypt==4.2.0
 python-jose[cryptography]==3.3.0
 slowapi == 0.1.9
+psycopg2-binary==2.9.9
+pyannote.audio==3.3.2
+torch==2.2.2
+torchaudio==2.2.2
+websockets==12.0

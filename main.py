@@ -1,35 +1,27 @@
 """
 main.py — PolyglotAI API v5.1
-Changes from v5.0:
-  1. WebSocket real-time endpoint added (/ws/live)
-  2. Rate limiting added (slowapi) — protects Groq API key from abuse
-  3. WebSocket router imported from websocket_live.py
 """
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())  # MUST be first — loads .env before all imports
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import os, base64, json, asyncio
-from dotenv import load_dotenv
 from pathlib import Path
-
-# ── Rate limiting ─────────────────────────────────────────────────
-# slowapi limits how many requests each IP can make per minute
-# This protects your Groq API key from being burned by bots or abuse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 limiter = Limiter(key_func=get_remote_address)
 
-load_dotenv(Path(__file__).parent / ".env")
-
 from backend.services.transcribe import transcribe_audio
 from backend.services.translate import translate_text, translate_text_stream, is_hallucination
 from backend.services.summarize import summarize_text
 from backend.services.sentiment import analyze_sentiment
 from backend.services.translate import LANGUAGE_MAP
+from backend.services.diarize import diarize_audio, format_diarized_transcript
 from backend.auth import (
     init_db, get_current_user,
     register_user, login_user,
@@ -264,3 +256,57 @@ async def process_all(
     if include_summary:   out["summary"]   = await summarize_text(transcript)
     if include_sentiment: out["sentiment"] = await analyze_sentiment(transcript)
     return out
+
+
+# ── Speaker Diarization ───────────────────────────────────────────
+@app.post("/diarize")
+@limiter.limit("5/minute")
+async def diarize(
+    request: Request,
+    file: UploadFile = File(...),
+    target_language: str = "Hindi",
+    include_translation: bool = True,
+):
+    """
+    Transcribe audio and identify who is speaking when.
+    Returns segments with speaker labels, full dialogue, and translation.
+    Real-world uses: meeting transcripts, interview analysis, podcast transcription.
+    """
+    audio_bytes = await file.read()
+    _validate_audio_upload(file, audio_bytes)
+
+    # Step 1: Transcribe with Whisper (gets text + timestamps)
+    result = await transcribe_audio(audio_bytes, file.filename)
+    if not result["text"]:
+        raise HTTPException(500, "Whisper returned empty transcript.")
+
+    segments = result.get("segments", [])
+    if not segments:
+        return {
+            "segments":          [{"speaker": "Speaker 1", "start": 0.0, "end": 0.0, "text": result["text"]}],
+            "dialogue":          f"Speaker 1: {result['text']}",
+            "translation":       "",
+            "detected_language": result["language"],
+            "speaker_count":     1,
+        }
+
+    # Step 2: Run speaker diarization
+    diarized = await diarize_audio(audio_bytes, file.filename, segments)
+
+    # Step 3: Format as readable dialogue
+    dialogue = format_diarized_transcript(diarized)
+
+    # Step 4: Translate if requested
+    translation = ""
+    if include_translation and dialogue:
+        translation = await translate_text(dialogue, target_language)
+
+    speaker_count = len(set(seg["speaker"] for seg in diarized))
+
+    return {
+        "segments":          diarized,
+        "dialogue":          dialogue,
+        "translation":       translation,
+        "detected_language": result["language"],
+        "speaker_count":     speaker_count,
+    }

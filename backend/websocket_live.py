@@ -1,37 +1,19 @@
 """
-websocket_live.py — PolyglotAI Real-Time WebSocket Service
-=============================================================
-Replaces the old HTTP POST /live/chunk with a persistent WebSocket connection.
+websocket_live.py — PolyglotAI Real-Time WebSocket v5.2
+=========================================================
+WHAT CHANGED FROM v5.1:
+  v5.1 used Whisper for live (slow, inaccurate on short clips)
+  v5.2 uses Deepgram Nova-2 (word by word, real-time, like Google)
 
-HOW IT WORKS:
-  Browser                        Server (this file)
-  ──────────────────────────────────────────────────
-  connects to /ws/live  ───────▶  accepts connection
-  sends audio bytes     ───────▶  transcribes with Whisper
-                        ◀───────  sends back transcript + translation instantly
-  sends more audio      ───────▶  transcribes again
-                        ◀───────  sends result again
-  ... (stays connected the whole session)
-
-WHY THIS IS BETTER THAN HTTP:
-  Old way: speak → HTTP request (open) → wait → response → (close) → speak again
-           each request has ~200-400ms overhead just to open/close the connection
-
-  New way: speak → bytes over open socket → instant response
-           zero connection overhead, no gaps between sentences
-
-Add this to main.py:
-  from websocket_live import router as ws_router
-  app.include_router(ws_router)
+TWO TYPES OF RESULTS:
+  interim = partial words as you speak (shown greyed out instantly)
+  final   = complete sentence (translated and added to chunk log)
 """
 
-import asyncio
-import json
-import base64
-import logging
+import asyncio, json, logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from backend.services.transcribe import transcribe_audio
 from backend.services.translate import translate_text, is_hallucination
+from backend.services.deepgram_live import stream_to_deepgram
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,96 +22,90 @@ router = APIRouter()
 @router.websocket("/ws/live")
 async def websocket_live(websocket: WebSocket):
     """
-    Real-time WebSocket endpoint.
+    Browser sends:
+      First message:  { "type": "config", "target_language": "Hindi" }
+      After that:     Raw PCM audio bytes (16-bit, 16kHz, mono)
 
-    The browser sends JSON messages in this format:
-      { "audio_b64": "...", "filename": "chunk.webm", "target_language": "Hindi" }
-
-    The server responds with JSON:
-      { "transcript": "...", "translation": "...", "detected_language": "...", "skipped": false }
-
-    If audio is too short or is a hallucination, skipped=true is returned.
+    Server sends back:
+      { "type": "interim",  "transcript": "hello how" }
+      { "type": "final",    "transcript": "Hello, how are you?", "translation": "..." }
+      { "type": "error",    "message": "..." }
     """
     await websocket.accept()
-    logger.info("WebSocket connected")
+    logger.info("[WS] Client connected")
+
+    audio_queue  = asyncio.Queue()
+    result_queue = asyncio.Queue()
+    target_language = "Hindi"
 
     try:
-        while True:
-            # Wait for audio chunk from browser
-            raw = await websocket.receive_text()
+        # First message = config
+        config_raw = await websocket.receive_text()
+        config = json.loads(config_raw)
+        if config.get("type") == "config":
+            target_language = config.get("target_language", "Hindi")
 
-            try:
-                data = json.loads(raw)
-            except Exception:
-                await websocket.send_text(json.dumps({"error": "Invalid JSON"}))
-                continue
+        # Start Deepgram in background
+        deepgram_task = asyncio.create_task(
+            stream_to_deepgram(audio_queue, result_queue)
+        )
 
-            audio_b64       = data.get("audio_b64", "")
-            filename        = data.get("filename", "chunk.webm")
-            target_language = data.get("target_language", "Hindi")
-            language        = data.get("language")  # optional forced language e.g. "en"
-
-            # Decode base64 audio
-            try:
-                audio_bytes = base64.b64decode(audio_b64)
-            except Exception:
-                await websocket.send_text(json.dumps({"error": "Invalid base64"}))
-                continue
-
-            # Skip very short audio (silence / noise)
-            # 15000 bytes ≈ less than 0.3 seconds of audio — not worth sending to Whisper
-            if len(audio_bytes) < 15000:
-                await websocket.send_text(json.dumps({
-                    "transcript": "", "translation": "",
-                    "detected_language": "", "skipped": True
-                }))
-                continue
-
-            # Transcribe with Whisper (via Groq)
-            result = None
-            for attempt in range(2):  # retry once on failure
+        async def receive_audio():
+            while True:
                 try:
-                    result = await transcribe_audio(audio_bytes, filename, language=language)
+                    data = await websocket.receive_bytes()
+                    await audio_queue.put(data)
+                except WebSocketDisconnect:
                     break
                 except Exception as e:
-                    logger.warning(f"Whisper attempt {attempt+1} failed: {e}")
-                    if attempt == 0:
-                        await asyncio.sleep(0.8)  # brief pause before retry
+                    logger.warning(f"[WS] Receive error: {e}")
+                    break
+            await audio_queue.put(None)
 
-            if result is None:
-                await websocket.send_text(json.dumps({"error": "Transcription failed"}))
-                continue
+        async def send_results():
+            while True:
+                result = await result_queue.get()
+                if result is None:
+                    break
+                if "error" in result:
+                    await websocket.send_text(json.dumps({"type": "error", "message": result["error"]}))
+                    break
 
-            transcript = result["text"].strip()
+                transcript = result.get("transcript", "").strip()
+                is_final   = result.get("is_final", False)
+                if not transcript:
+                    continue
 
-            # Filter out Whisper hallucinations (fake words it generates for silence)
-            if not transcript or is_hallucination(transcript):
-                await websocket.send_text(json.dumps({
-                    "transcript": "", "translation": "",
-                    "detected_language": result["language"], "skipped": True
-                }))
-                continue
+                if not is_final:
+                    # Partial — send immediately, browser shows greyed out
+                    await websocket.send_text(json.dumps({
+                        "type": "interim", "transcript": transcript
+                    }))
+                else:
+                    if is_hallucination(transcript):
+                        continue
+                    translation = ""
+                    try:
+                        translation = await translate_text(transcript, target_language)
+                    except Exception as e:
+                        logger.warning(f"[WS] Translation failed: {e}")
+                    await websocket.send_text(json.dumps({
+                        "type": "final",
+                        "transcript": transcript,
+                        "translation": translation.strip(),
+                    }))
 
-            # Translate the transcript
-            try:
-                translation = await translate_text(transcript, target_language)
-            except Exception as e:
-                logger.warning(f"Translation failed: {e}")
-                translation = ""
-
-            # Send result back to browser instantly
-            await websocket.send_text(json.dumps({
-                "transcript":        transcript,
-                "translation":       translation.strip(),
-                "detected_language": result["language"],
-                "skipped":           False
-            }))
+        await asyncio.gather(receive_audio(), send_results())
 
     except WebSocketDisconnect:
-        logger.info("WebSocket disconnected")
+        logger.info("[WS] Client disconnected")
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"[WS] Error: {e}")
         try:
-            await websocket.send_text(json.dumps({"error": str(e)}))
+            await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
         except Exception:
             pass
+    finally:
+        await audio_queue.put(None)
+        if 'deepgram_task' in locals():
+            deepgram_task.cancel()
