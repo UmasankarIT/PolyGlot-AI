@@ -782,7 +782,7 @@ async function saveFileHistory(filename, lang, transcript, translation) {
   });
 }
 
-function loadSessionHistory() { renderHistory(); }
+function loadSessionHistory() { if(authToken && currentUser) renderHistory(); }
 
 async function renderHistory() {
   const list = document.getElementById("historyList");
