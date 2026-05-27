@@ -1,26 +1,3 @@
-"""
-deepgram_live.py — PolyglotAI Real-Time Streaming via Deepgram
-===============================================================
-WHY DEEPGRAM INSTEAD OF WHISPER FOR LIVE:
-  Whisper = designed for complete audio files
-             sends chunk → waits → gets result (slow, inaccurate on short clips)
-
-  Deepgram = designed for live streaming
-              words appear AS YOU SPEAK, word by word
-              like Google Live Translate
-
-HOW IT WORKS:
-  Browser mic → raw audio bytes → WebSocket to our server
-  Our server   → streams those bytes → Deepgram WebSocket
-  Deepgram     → sends back words in real time → we translate → browser shows
-
-SETUP:
-  1. Go to https://deepgram.com → sign up (free $200 credit)
-  2. Dashboard → API Keys → Create API Key → copy it
-  3. Render → Environment → add:
-     DEEPGRAM_API_KEY = your_key_here
-"""
-
 import os, json, asyncio, logging
 import websockets
 from pathlib import Path
@@ -68,7 +45,7 @@ async def stream_to_deepgram(
     headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
 
     try:
-        async with websockets.connect(DEEPGRAM_URL, additional_headers=headers) as dg_ws:
+        async with websockets.connect(DEEPGRAM_URL, extra_headers=headers) as dg_ws:
             logger.info("[Deepgram] Connected")
 
             async def send_audio():
