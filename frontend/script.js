@@ -782,7 +782,7 @@ async function saveFileHistory(filename, lang, transcript, translation) {
   });
 }
 
-function loadSessionHistory() { if(authToken && currentUser) renderHistory(); }
+function loadSessionHistory() { renderHistory(); }
 
 async function renderHistory() {
   const list = document.getElementById("historyList");
@@ -1198,4 +1198,205 @@ function blobToBase64(blob) {
     reader.onerror   = reject;
     reader.readAsDataURL(blob);
   });
+}
+/* ════════════════════════════════════════════════════════════════
+   AGENT — Smart AI Analysis (v5.3)
+   Analyzes audio, suggests tools, user confirms, runs in parallel
+   ════════════════════════════════════════════════════════════════ */
+
+let agentTranscript   = "";
+let agentDetectedLang = "";
+
+async function agentAnalyze() {
+  if (!selectedFile) { toast("Please upload a file first", "error"); return; }
+
+  const btn  = document.getElementById("agentBtn");
+  const prog = document.getElementById("fileProgress");
+  const pmsg = document.getElementById("fileProgressMsg");
+
+  btn.disabled = true;
+  prog.style.display = "block";
+  pmsg.style.display = "block";
+  pmsg.textContent = "🤖 Agent is analyzing your audio…";
+  document.getElementById("fileBadge").textContent = "Analyzing…";
+  document.getElementById("resultsEmpty").style.display = "none";
+
+  // Remove old panel if any
+  const oldPanel = document.getElementById("agentPanel");
+  if (oldPanel) oldPanel.remove();
+
+  try {
+    const lang = document.getElementById("fileLang").value;
+    const fd   = new FormData();
+    fd.append("file", selectedFile);
+    fd.append("target_language", lang);
+
+    const res  = await fetch(`${API}/agent/analyze`, { method: "POST", body: fd });
+    if (!res.ok) throw new Error("Agent analysis failed");
+    const data = await res.json();
+
+    agentTranscript   = data.transcript;
+    agentDetectedLang = data.detected_lang;
+
+    // Show transcript immediately
+    fileResults.transcript = data.transcript;
+    showCard("transcript", data.transcript);
+    if (data.detected_lang)
+      document.getElementById("fileDetectedLang").textContent = `Detected: ${data.detected_lang.toUpperCase()}`;
+
+    // Show suggestion panel
+    _showAgentPanel(data.suggestions, lang, data.duration_secs, data.word_count);
+
+    document.getElementById("fileBadge").textContent = "Agent Ready";
+    toast("✅ Transcribed — confirm steps below", "success");
+
+  } catch (err) {
+    toast("Agent error: " + err.message, "error");
+    document.getElementById("fileBadge").textContent = "Error";
+    document.getElementById("resultsEmpty").style.display = "flex";
+  } finally {
+    prog.style.display = "none";
+    pmsg.style.display = "none";
+    btn.disabled = false;
+  }
+}
+
+function _showAgentPanel(suggestions, lang, durationSecs, wordCount) {
+  const panel = document.createElement("div");
+  panel.id = "agentPanel";
+  panel.style.cssText = `
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px;
+    margin: 14px 0;
+  `;
+
+  const info = durationSecs
+    ? `<div style="font-size:11px;color:var(--text3);margin-bottom:12px">
+         ⏱ ~${durationSecs}s · ${wordCount} words
+       </div>`
+    : "";
+
+  panel.innerHTML = `
+    <div style="font-weight:600;font-size:14px;margin-bottom:4px;color:var(--accent)">
+      🤖 Agent Suggestions
+    </div>
+    ${info}
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
+      ${suggestions.map(s => `
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="agent-chk-${s.tool}" ${s.enabled ? "checked" : ""}
+            style="width:15px;height:15px;margin-top:2px;accent-color:var(--accent);cursor:pointer;flex-shrink:0">
+          <span>
+            <strong>${_agentToolLabel(s.tool)}</strong>
+            <span style="color:var(--text2);margin-left:6px;font-size:12px">${escapeHtml(s.reason)}</span>
+          </span>
+        </label>
+      `).join("")}
+    </div>
+    <button onclick="_agentRun('${lang}')" style="
+      background:var(--accent);color:#fff;border:none;border-radius:8px;
+      padding:10px 0;font-size:13px;font-weight:600;cursor:pointer;width:100%;
+    ">▶ Run Selected</button>
+  `;
+
+  // Insert after dropzone
+  const dropZone = document.getElementById("dropZone");
+  if (dropZone) dropZone.parentNode.insertBefore(panel, dropZone.nextSibling);
+}
+
+function _agentToolLabel(tool) {
+  return { translate: "🌐 Translate", summarize: "📝 Summarize", sentiment: "😊 Sentiment", diarize: "👥 Speaker Detection" }[tool] || tool;
+}
+
+async function _agentRun(lang) {
+  const runTranslate = document.getElementById("agent-chk-translate")?.checked || false;
+  const runSummarize = document.getElementById("agent-chk-summarize")?.checked || false;
+  const runSentiment = document.getElementById("agent-chk-sentiment")?.checked || false;
+
+  const prog = document.getElementById("fileProgress");
+  const pmsg = document.getElementById("fileProgressMsg");
+  prog.style.display = "block";
+  pmsg.style.display = "block";
+  pmsg.textContent   = "🤖 Running selected tools…";
+  document.getElementById("fileBadge").textContent = "Processing…";
+
+  // Disable run button
+  const runBtn = document.querySelector("#agentPanel button");
+  if (runBtn) { runBtn.disabled = true; runBtn.textContent = "Running…"; }
+
+  try {
+    const res = await fetch(`${API}/agent/run`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        transcript:      agentTranscript,
+        detected_lang:   agentDetectedLang,
+        target_language: lang,
+        run_translate:   runTranslate,
+        run_summarize:   runSummarize,
+        run_sentiment:   runSentiment,
+      }),
+    });
+
+    if (!res.ok) throw new Error("Agent run failed");
+    const data = await res.json();
+
+    // Show translation
+    if (data.translation) {
+      applyRTL(lang);
+      const cardId = `card-trans-${lang.replace(/\s|\(|\)/g, "_")}`;
+      const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g, "_")}`;
+      addTranslationCard(lang, cardId, bodyId);
+      const el = document.getElementById(bodyId);
+      if (el) el.textContent = data.translation;
+      fileResults.translations[lang] = data.translation;
+    }
+
+    // Show summary
+    if (data.summary) {
+      fileResults.summary = data.summary;
+      showCard("summary", data.summary);
+    }
+
+    // Show sentiment
+    if (data.sentiment) {
+      const sData = data.sentiment;
+      const card  = document.getElementById("card-sentiment-file");
+      const body  = document.getElementById("res-sentiment-file");
+      if (card && body) {
+        const emoji = EMOTION_EMOJI[sData.emotion] || "😐";
+        const color = SENTIMENT_COLOR[sData.sentiment] || "var(--text)";
+        body.innerHTML = `
+          <div style="display:flex;align-items:center;gap:14px">
+            <span style="font-size:32px">${emoji}</span>
+            <div style="flex:1">
+              <div style="font-weight:600;color:${color};text-transform:capitalize">${sData.sentiment} · ${sData.emotion}</div>
+              <div style="font-size:12px;color:var(--text2);margin-top:3px">${escapeHtml(sData.summary)}</div>
+              ${sData.key_phrases?.length ? `<div style="margin-top:8px">${sData.key_phrases.map(p=>`<span class="phrase-tag">${escapeHtml(p)}</span>`).join("")}</div>` : ""}
+            </div>
+            <span style="font-size:22px;font-weight:700;color:${color}">${Math.round(sData.score*100)}%</span>
+          </div>`;
+        card.style.display = "block";
+      }
+    }
+
+    document.getElementById("downloadGroup").style.display = "flex";
+    document.getElementById("fileBadge").textContent = "Done";
+    toast("🤖 Agent done! ✓", "success");
+    saveFileHistory(selectedFile.name, lang, agentTranscript, data.translation || "");
+
+    // Remove panel
+    const panel = document.getElementById("agentPanel");
+    if (panel) panel.remove();
+
+  } catch (err) {
+    toast("Agent error: " + err.message, "error");
+    document.getElementById("fileBadge").textContent = "Error";
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = "▶ Run Selected"; }
+  } finally {
+    prog.style.display = "none";
+    pmsg.style.display = "none";
+  }
 }
