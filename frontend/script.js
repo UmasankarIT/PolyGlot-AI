@@ -1401,6 +1401,7 @@ async function _agentRun(lang) {
     prog.style.display = "none";
     pmsg.style.display = "none";
   }
+}
 
 // ── Global RAG state ─────────────────────────────────────────────
 let ragSessionId   = "";
@@ -1625,5 +1626,4 @@ function _ragAddMessage(role, text, id) {
   div.textContent = text;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
-}
 }
