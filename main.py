@@ -1,8 +1,6 @@
-"""
-main.py — PolyglotAI API v5.1
-"""
+
 from dotenv import load_dotenv, find_dotenv
-load_dotenv(find_dotenv())  # MUST be first — loads .env before all imports
+load_dotenv(find_dotenv())
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +20,9 @@ from backend.services.summarize import summarize_text
 from backend.services.sentiment import analyze_sentiment
 from backend.services.translate import LANGUAGE_MAP
 from backend.services.diarize import diarize_audio, format_diarized_transcript
+from backend.services.keywords import extract_keywords
 from backend.services.agent import router as agent_router
+from backend.services.rag import router as rag_router
 from backend.auth import (
     init_db, get_current_user,
     register_user, login_user,
@@ -30,14 +30,10 @@ from backend.auth import (
     delete_history_entry, clear_all_history,
     RegisterRequest, LoginRequest, HistoryEntry
 )
-
-# ── Import WebSocket router ───────────────────────────────────────
-# This is the new real-time endpoint that replaces /live/chunk
 from backend.websocket_live import router as ws_router
 
-app = FastAPI(title="PolyglotAI API", version="5.1.0")
+app = FastAPI(title="PolyglotAI API", version="5.3.0")
 
-# ── Attach rate limiter to app ────────────────────────────────────
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -52,12 +48,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Include WebSocket router ──────────────────────────────────────
 app.include_router(ws_router)
 app.include_router(agent_router)
+app.include_router(rag_router)   # ← NEW
 
-ALLOWED_EXTS    = {"mp3", "wav", "m4a", "mp4", "webm", "ogg", "flac", "aac"}
-MAX_FILE_BYTES  = 25 * 1024 * 1024
+ALLOWED_EXTS   = {"mp3", "wav", "m4a", "mp4", "webm", "ogg", "flac", "aac"}
+MAX_FILE_BYTES = 25 * 1024 * 1024
 
 
 @app.on_event("startup")
@@ -108,6 +104,9 @@ class SummarizeRequest(BaseModel):
 class SentimentRequest(BaseModel):
     text: str
 
+class KeywordsRequest(BaseModel):   # ← NEW
+    text: str
+
 class LiveChunkRequest(BaseModel):
     audio_b64: str
     filename: str
@@ -127,7 +126,7 @@ def _validate_audio_upload(file: UploadFile, audio_bytes: bytes):
 # ── Health & Meta ─────────────────────────────────────────────────
 @app.get("/health")
 async def health():
-    return {"status": "ok", "message": "PolyglotAI API is running", "version": "5.1.0"}
+    return {"status": "ok", "message": "PolyglotAI API is running", "version": "5.3.0"}
 
 @app.get("/languages")
 async def languages():
@@ -136,7 +135,7 @@ async def languages():
 
 # ── Transcribe ────────────────────────────────────────────────────
 @app.post("/transcribe")
-@limiter.limit("20/minute")  # max 20 file transcriptions per minute per IP
+@limiter.limit("20/minute")
 async def transcribe(request: Request, file: UploadFile = File(...)):
     audio_bytes = await file.read()
     _validate_audio_upload(file, audio_bytes)
@@ -148,12 +147,11 @@ async def transcribe(request: Request, file: UploadFile = File(...)):
 
 # ── Translate ─────────────────────────────────────────────────────
 @app.post("/translate")
-@limiter.limit("60/minute")  # 60 translations per minute per IP
+@limiter.limit("60/minute")
 async def translate(request: Request, req: TranslateRequest):
     if not req.text.strip():
         raise HTTPException(400, "Text cannot be empty")
-    translation = await translate_text(req.text, req.target_language)
-    return {"translation": translation}
+    return {"translation": await translate_text(req.text, req.target_language)}
 
 @app.post("/translate/stream")
 @limiter.limit("60/minute")
@@ -182,8 +180,7 @@ async def translate_stream(request: Request, req: TranslateRequest):
 async def summarize(request: Request, req: SummarizeRequest):
     if not req.text.strip():
         raise HTTPException(400, "Text cannot be empty")
-    summary = await summarize_text(req.text)
-    return {"summary": summary}
+    return {"summary": await summarize_text(req.text)}
 
 
 # ── Sentiment ─────────────────────────────────────────────────────
@@ -192,13 +189,19 @@ async def summarize(request: Request, req: SummarizeRequest):
 async def sentiment(request: Request, req: SentimentRequest):
     if not req.text.strip() or len(req.text.strip()) < 10:
         raise HTTPException(400, "Text too short for sentiment analysis (min 10 chars)")
-    result = await analyze_sentiment(req.text)
-    return result
+    return await analyze_sentiment(req.text)
+
+
+# ── Keywords ─────────────────────────────────────────────────────  ← NEW
+@app.post("/keywords")
+@limiter.limit("30/minute")
+async def keywords(request: Request, req: KeywordsRequest):
+    if not req.text.strip():
+        raise HTTPException(400, "Text cannot be empty")
+    return await extract_keywords(req.text)
 
 
 # ── Live chunk (HTTP fallback) ────────────────────────────────────
-# Kept for backwards compatibility.
-# New code uses /ws/live (WebSocket) instead — it's faster and has no gaps.
 @app.post("/live/chunk")
 @limiter.limit("30/minute")
 async def live_chunk(request: Request, req: LiveChunkRequest):
@@ -251,8 +254,8 @@ async def process_all(
 ):
     audio_bytes = await file.read()
     _validate_audio_upload(file, audio_bytes)
-    result     = await transcribe_audio(audio_bytes, file.filename)
-    transcript = result["text"]
+    result      = await transcribe_audio(audio_bytes, file.filename)
+    transcript  = result["text"]
     translation = await translate_text(transcript, target_language)
     out = {"transcript": transcript, "translation": translation, "detected_language": result["language"]}
     if include_summary:   out["summary"]   = await summarize_text(transcript)
@@ -269,15 +272,8 @@ async def diarize(
     target_language: str = "Hindi",
     include_translation: bool = True,
 ):
-    """
-    Transcribe audio and identify who is speaking when.
-    Returns segments with speaker labels, full dialogue, and translation.
-    Real-world uses: meeting transcripts, interview analysis, podcast transcription.
-    """
     audio_bytes = await file.read()
     _validate_audio_upload(file, audio_bytes)
-
-    # Step 1: Transcribe with Whisper (gets text + timestamps)
     result = await transcribe_audio(audio_bytes, file.filename)
     if not result["text"]:
         raise HTTPException(500, "Whisper returned empty transcript.")
@@ -292,23 +288,16 @@ async def diarize(
             "speaker_count":     1,
         }
 
-    # Step 2: Run speaker diarization
-    diarized = await diarize_audio(audio_bytes, file.filename, segments)
-
-    # Step 3: Format as readable dialogue
-    dialogue = format_diarized_transcript(diarized)
-
-    # Step 4: Translate if requested
+    diarized  = await diarize_audio(audio_bytes, file.filename, segments)
+    dialogue  = format_diarized_transcript(diarized)
     translation = ""
     if include_translation and dialogue:
         translation = await translate_text(dialogue, target_language)
-
-    speaker_count = len(set(seg["speaker"] for seg in diarized))
 
     return {
         "segments":          diarized,
         "dialogue":          dialogue,
         "translation":       translation,
         "detected_language": result["language"],
-        "speaker_count":     speaker_count,
+        "speaker_count":     len(set(seg["speaker"] for seg in diarized)),
     }

@@ -1241,6 +1241,8 @@ async function agentAnalyze() {
     // Show transcript immediately
     fileResults.transcript = data.transcript;
     showCard("transcript", data.transcript);
+    showKeywords(data.keywords);
+    await ragStore(data.transcript, data.session_id, document.getElementById("fileLang").value);
     if (data.detected_lang)
       document.getElementById("fileDetectedLang").textContent = `Detected: ${data.detected_lang.toUpperCase()}`;
 
@@ -1399,4 +1401,229 @@ async function _agentRun(lang) {
     prog.style.display = "none";
     pmsg.style.display = "none";
   }
+
+// ── Global RAG state ─────────────────────────────────────────────
+let ragSessionId   = "";
+let ragLanguage    = "English";
+let ragChatHistory = [];
+
+// ── Show Keywords & Topics ────────────────────────────────────────
+function showKeywords(kwData) {
+  if (!kwData) return;
+
+  // Remove old if exists
+  const old = document.getElementById("keywordsCard");
+  if (old) old.remove();
+
+  const { topics = [], keywords = [], tag = "" } = kwData;
+  if (!topics.length && !keywords.length) return;
+
+  const card = document.createElement("div");
+  card.id = "keywordsCard";
+  card.style.cssText = `
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 12px 0;
+  `;
+
+  const topicTags = topics.map(t => `
+    <span style="
+      background: var(--accent);
+      color: #fff;
+      border-radius: 20px;
+      padding: 3px 12px;
+      font-size: 12px;
+      font-weight: 600;
+    ">${escapeHtml(t)}</span>
+  `).join("");
+
+  const kwTags = keywords.map(k => `
+    <span style="
+      background: var(--surface2, var(--border));
+      color: var(--text);
+      border-radius: 20px;
+      padding: 3px 10px;
+      font-size: 12px;
+      border: 1px solid var(--border);
+    ">${escapeHtml(k)}</span>
+  `).join("");
+
+  card.innerHTML = `
+    ${tag ? `<div style="font-size:12px;color:var(--text2);margin-bottom:10px;font-style:italic">📌 ${escapeHtml(tag)}</div>` : ""}
+    ${topicTags ? `<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px">${topicTags}</div>` : ""}
+    ${kwTags    ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${kwTags}</div>` : ""}
+  `;
+
+  // Insert after transcript card
+  const transcriptCard = document.getElementById("card-transcript");
+  if (transcriptCard) {
+    transcriptCard.parentNode.insertBefore(card, transcriptCard.nextSibling);
+  }
+}
+
+// ── Initialize RAG after transcription ───────────────────────────
+async function ragStore(transcript, sessionId, lang) {
+  if (!transcript || !sessionId) return;
+  ragSessionId = sessionId;
+  ragLanguage  = lang || "English";
+
+  try {
+    await fetch(`${API}/rag/store`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id:    sessionId,
+        transcript:    transcript,
+        detected_lang: lang || "en",
+      }),
+    });
+    // Show chat UI after storing
+    showRagChat();
+  } catch (e) {
+    console.warn("[RAG] Store failed:", e);
+  }
+}
+
+// ── Show RAG Chat UI ──────────────────────────────────────────────
+function showRagChat() {
+  const old = document.getElementById("ragChatCard");
+  if (old) old.remove();
+
+  ragChatHistory = [];
+
+  const card = document.createElement("div");
+  card.id = "ragChatCard";
+  card.style.cssText = `
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 12px 0;
+  `;
+
+  card.innerHTML = `
+    <div style="font-weight:600;font-size:14px;margin-bottom:12px;color:var(--accent)">
+      💬 Ask about this transcript
+    </div>
+    <div id="ragMessages" style="
+      max-height: 280px;
+      overflow-y: auto;
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    ">
+      <div style="font-size:12px;color:var(--text2);text-align:center">
+        Ask anything about what was said in the audio
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <input
+        id="ragInput"
+        type="text"
+        placeholder="e.g. What was the main topic?"
+        style="
+          flex:1;
+          background: var(--bg);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 8px 12px;
+          font-size: 13px;
+          color: var(--text);
+          outline: none;
+        "
+        onkeydown="if(event.key==='Enter') ragAsk()"
+      />
+      <button onclick="ragAsk()" style="
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 8px 16px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        white-space: nowrap;
+      ">Ask</button>
+    </div>
+  `;
+
+  // Insert at bottom of output area
+  const outputArea = document.querySelector(".output-area") ||
+                     document.getElementById("fileOutput") ||
+                     document.getElementById("resultsEmpty")?.parentNode;
+  if (outputArea) outputArea.appendChild(card);
+}
+
+// ── Ask RAG question ──────────────────────────────────────────────
+async function ragAsk() {
+  const input = document.getElementById("ragInput");
+  const question = input?.value?.trim();
+  if (!question) return;
+  if (!ragSessionId) { toast("Please process a file first", "error"); return; }
+
+  input.value = "";
+  input.disabled = true;
+
+  // Add user message
+  _ragAddMessage("user", question);
+
+  // Add loading indicator
+  const loadingId = "rag-loading-" + Date.now();
+  _ragAddMessage("assistant", "Thinking…", loadingId);
+
+  try {
+    const res = await fetch(`${API}/rag/ask`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: ragSessionId,
+        question:   question,
+        language:   ragLanguage,
+      }),
+    });
+
+    if (!res.ok) throw new Error("RAG request failed");
+    const data = await res.json();
+
+    // Replace loading with answer
+    const loadingEl = document.getElementById(loadingId);
+    if (loadingEl) loadingEl.remove();
+    _ragAddMessage("assistant", data.answer);
+
+  } catch (err) {
+    const loadingEl = document.getElementById(loadingId);
+    if (loadingEl) loadingEl.remove();
+    _ragAddMessage("assistant", "Sorry, could not get an answer. Try again.");
+    console.warn("[RAG] Ask failed:", err);
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+function _ragAddMessage(role, text, id) {
+  const container = document.getElementById("ragMessages");
+  if (!container) return;
+
+  const isUser = role === "user";
+  const div = document.createElement("div");
+  if (id) div.id = id;
+  div.style.cssText = `
+    max-width: 85%;
+    align-self: ${isUser ? "flex-end" : "flex-start"};
+    background: ${isUser ? "var(--accent)" : "var(--bg)"};
+    color: ${isUser ? "#fff" : "var(--text)"};
+    border-radius: ${isUser ? "12px 12px 2px 12px" : "12px 12px 12px 2px"};
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    border: ${isUser ? "none" : "1px solid var(--border)"};
+  `;
+  div.textContent = text;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
 }
