@@ -22,7 +22,7 @@ from backend.services.summarize import summarize_text
 from backend.services.sentiment import analyze_sentiment
 from backend.services.translate import LANGUAGE_MAP
 from backend.services.diarize import diarize_audio, format_diarized_transcript
-from backend.services.Agent import router as agent_router
+from backend.services.agent import router as agent_router
 from backend.auth import (
     init_db, get_current_user,
     register_user, login_user,
@@ -54,6 +54,7 @@ app.add_middleware(
 
 # ── Include WebSocket router ──────────────────────────────────────
 app.include_router(ws_router)
+app.include_router(agent_router)
 
 ALLOWED_EXTS    = {"mp3", "wav", "m4a", "mp4", "webm", "ogg", "flac", "aac"}
 MAX_FILE_BYTES  = 25 * 1024 * 1024
