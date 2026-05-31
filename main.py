@@ -1,4 +1,3 @@
-
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
@@ -23,6 +22,7 @@ from backend.services.diarize import diarize_audio, format_diarized_transcript
 from backend.services.keywords import extract_keywords
 from backend.services.agent import router as agent_router
 from backend.services.rag import router as rag_router
+from backend.services.study import router as study_router
 from backend.auth import (
     init_db, get_current_user,
     register_user, login_user,
@@ -50,7 +50,8 @@ app.add_middleware(
 
 app.include_router(ws_router)
 app.include_router(agent_router)
-app.include_router(rag_router)   # ← NEW
+app.include_router(rag_router)
+app.include_router(study_router)
 
 ALLOWED_EXTS   = {"mp3", "wav", "m4a", "mp4", "webm", "ogg", "flac", "aac"}
 MAX_FILE_BYTES = 25 * 1024 * 1024

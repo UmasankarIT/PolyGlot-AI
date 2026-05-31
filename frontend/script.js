@@ -1,9 +1,3 @@
-/* ════════════════════════════════════════════════════════════════
-   PolyglotAI v5.0 — Complete script.js
-   Fixed: Live translation, Conversation Mode, Sentiment AI
-   New:   Better UI, real-world features, robust error handling
-   ════════════════════════════════════════════════════════════════ */
-
 // API base URL — auto-detects local vs production
 const API = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
   ? "http://127.0.0.1:8000"
@@ -146,6 +140,7 @@ function registerKeyboardShortcuts() {
     if (e.ctrlKey && e.key === "1") { e.preventDefault(); switchTab("live"); }
     if (e.ctrlKey && e.key === "2") { e.preventDefault(); switchTab("conversation"); }
     if (e.ctrlKey && e.key === "3") { e.preventDefault(); switchTab("file"); }
+    if (e.ctrlKey && e.key === "4") { e.preventDefault(); switchTab("study"); }
   });
   const hint = document.getElementById("shortcutHint");
   if (hint) hint.textContent = "Space=mic · Esc=clear · Ctrl+1/2/3";
@@ -1243,6 +1238,7 @@ async function agentAnalyze() {
     showCard("transcript", data.transcript);
     showKeywords(data.keywords);
     await ragStore(data.transcript, data.session_id, document.getElementById("fileLang").value);
+    setTimeout(() => document.getElementById("ragChatCard")?.scrollIntoView({behavior:"smooth"}), 500);
     if (data.detected_lang)
       document.getElementById("fileDetectedLang").textContent = `Detected: ${data.detected_lang.toUpperCase()}`;
 
@@ -1552,10 +1548,12 @@ function showRagChat() {
   `;
 
   // Insert at bottom of output area
-  const outputArea = document.querySelector(".output-area") ||
-                     document.getElementById("fileOutput") ||
-                     document.getElementById("resultsEmpty")?.parentNode;
-  if (outputArea) outputArea.appendChild(card);
+  const outputArea = document.getElementById("resultsBody") ||
+                     document.querySelector(".output-area");
+  if (outputArea) {
+    outputArea.appendChild(card);
+    setTimeout(() => card.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+  }
 }
 
 // ── Ask RAG question ──────────────────────────────────────────────
@@ -1626,4 +1624,162 @@ function _ragAddMessage(role, text, id) {
   div.textContent = text;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
+
+
+/* ════════════════════════════════════════════════════════════════
+   STUDY ASSISTANT — PolyglotAI v5.3
+   ════════════════════════════════════════════════════════════════ */
+
+let studySessionId   = "";
+let studyMode        = "explain";
+
+function onStudyDragOver(e)  { e.preventDefault(); document.getElementById("studyDropZone").classList.add("drag-over"); }
+function onStudyDragLeave()  { document.getElementById("studyDropZone").classList.remove("drag-over"); }
+function onStudyDrop(e)      { e.preventDefault(); onStudyDragLeave(); const f = e.dataTransfer.files[0]; if(f) handleStudyFile(f); }
+function onStudyZoneClick(e) { if(e.target.id==="studyFileInput") return; document.getElementById("studyFileInput").click(); }
+function onStudyFileSelect(e){ const f = e.target.files[0]; if(f) handleStudyFile(f); }
+
+function handleStudyFile(file) {
+  const allowed = ["pdf","docx","doc","txt"];
+  const ext = file.name.split(".").pop().toLowerCase();
+  if (!allowed.includes(ext)) { toast("Use PDF, DOCX, or TXT files", "error"); return; }
+  const dz = document.getElementById("studyDropZone");
+  dz.classList.add("has-file");
+  document.getElementById("studyDropMain").textContent = "✓ " + file.name;
+  const btn = document.getElementById("studyUploadBtn");
+  btn.disabled = false;
+  btn._file = file;
+}
+
+async function studyUpload() {
+  const btn  = document.getElementById("studyUploadBtn");
+  const file = btn._file;
+  if (!file) { toast("Please select a file first", "error"); return; }
+
+  btn.disabled = true;
+  btn.textContent = "Processing…";
+  document.getElementById("studyBadge").textContent = "Analyzing…";
+  document.getElementById("studyBadge").className = "rec-badge recording";
+  document.getElementById("studyProgress").style.display = "block";
+  document.getElementById("studyProgressMsg").style.display = "block";
+  document.getElementById("studyProgressMsg").textContent = "📖 Extracting and analyzing your material…";
+  document.getElementById("studyOutput").style.display = "none";
+  document.getElementById("studyEmpty").style.display = "none";
+
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(`${API}/study/upload`, { method: "POST", body: fd });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Upload failed"); }
+    const data = await res.json();
+
+    studySessionId = data.session_id;
+
+    // Show stats
+    document.getElementById("studyStats").style.display = "block";
+    document.getElementById("studyWordCount").textContent = data.word_count.toLocaleString();
+    document.getElementById("studyCharCount").textContent = data.char_count.toLocaleString();
+    document.getElementById("studyFilenameLabel").textContent = data.filename;
+
+    // Show output section
+    document.getElementById("studyOutput").style.display = "flex";
+
+    // Keywords
+    _renderStudyKeywords(data.keywords);
+
+    // Summary
+    document.getElementById("studySummaryText").textContent = data.summary;
+
+    // Reset chat
+    document.getElementById("studyChatMessages").innerHTML = `
+      <div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">
+        📚 Material ready — ask anything about it!
+      </div>`;
+
+    document.getElementById("studyBadge").textContent = "Ready";
+    document.getElementById("studyBadge").className = "rec-badge";
+    toast("✅ Material analyzed — start asking questions!", "success");
+
+  } catch (err) {
+    toast("Error: " + err.message, "error");
+    document.getElementById("studyEmpty").style.display = "flex";
+    document.getElementById("studyBadge").textContent = "Error";
+    document.getElementById("studyBadge").className = "rec-badge";
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3z"/></svg> Analyze Material`;
+    document.getElementById("studyProgress").style.display = "none";
+    document.getElementById("studyProgressMsg").style.display = "none";
+  }
+}
+
+function _renderStudyKeywords(kw) {
+  if (!kw) return;
+  const container = document.getElementById("studyKeywordsContainer");
+  if (!container) return;
+  const topics   = (kw.topics   || []).map(t => `<span style="background:var(--purple);color:#fff;border-radius:20px;padding:3px 12px;font-size:12px;font-weight:600">${escapeHtml(t)}</span>`).join("");
+  const keywords = (kw.keywords || []).map(k => `<span style="background:var(--surface);color:var(--text2);border-radius:20px;padding:3px 10px;font-size:12px;border:1px solid var(--border)">${escapeHtml(k)}</span>`).join("");
+  container.innerHTML = `
+    ${kw.tag ? `<div style="font-size:12px;color:var(--text2);font-style:italic;margin-bottom:8px">📌 ${escapeHtml(kw.tag)}</div>` : ""}
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">${topics}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">${keywords}</div>`;
+}
+
+async function studyAsk() {
+  const input    = document.getElementById("studyChatInput");
+  const question = input?.value?.trim();
+  if (!question) return;
+  if (!studySessionId) { toast("Please upload a file first", "error"); return; }
+
+  input.value    = "";
+  input.disabled = true;
+  _addStudyMsg("user", question);
+  const loadId = "sl-" + Date.now();
+  _addStudyMsg("assistant", "Thinking…", loadId);
+
+  try {
+    const res = await fetch(`${API}/study/ask`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: studySessionId, question, mode: studyMode }),
+    });
+    if (!res.ok) throw new Error("Failed");
+    const data = await res.json();
+    document.getElementById(loadId)?.remove();
+    _addStudyMsg("assistant", data.answer);
+  } catch {
+    document.getElementById(loadId)?.remove();
+    _addStudyMsg("assistant", "Sorry, couldn't get an answer. Try again.");
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+function _addStudyMsg(role, text, id) {
+  const c = document.getElementById("studyChatMessages");
+  if (!c) return;
+  const isUser = role === "user";
+  const div = document.createElement("div");
+  if (id) div.id = id;
+  div.style.cssText = `
+    max-width:88%;align-self:${isUser?"flex-end":"flex-start"};
+    background:${isUser?"var(--purple)":"var(--bg3)"};
+    color:${isUser?"#fff":"var(--text)"};
+    border-radius:${isUser?"14px 14px 3px 14px":"14px 14px 14px 3px"};
+    padding:10px 14px;font-size:13px;line-height:1.6;
+    border:${isUser?"none":"1px solid var(--border)"};
+    white-space:pre-wrap;word-break:break-word;`;
+  div.textContent = text;
+  c.appendChild(div);
+  c.scrollTop = c.scrollHeight;
+}
+
+function setStudyMode(mode) {
+  studyMode = mode;
+  document.querySelectorAll(".study-mode-btn").forEach(b => {
+    b.classList.toggle("on", b.dataset.mode === mode);
+  });
+}
+
 }

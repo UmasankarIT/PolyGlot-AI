@@ -295,6 +295,13 @@
         <span class="nav-new-badge">NEW</span>
       </button>
 
+
+      <div class="nav-section-label" style="margin-top:8px">STUDY</div>
+      <button type="button" class="nav-item" id="nav-study" onclick="switchTab('study')">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zM5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82z"/></svg></span>
+        <span class="nav-label">Study Assistant</span>
+        <span class="nav-new-badge">NEW</span>
+      </button>
       <div class="nav-section-label" style="margin-top:8px">ACCOUNT</div>
       <button type="button" class="nav-item" id="nav-history" onclick="switchTab('history')">
         <span class="nav-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg></span>
@@ -686,6 +693,136 @@
         <button type="button" class="auth-nudge-btn" onclick="showAuthOverlay()">Sign In / Register</button>
       </div>
       <div class="history-panel"><div id="historyList"></div></div>
+    </div>
+
+
+    <!-- ══════════ STUDY ASSISTANT PAGE ══════════ -->
+    <div class="page" id="page-study">
+      <div class="page-header">
+        <div class="page-title"><span class="label-dot" style="background:#a78bfa"></span>Study Assistant</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="detected-lang" id="studyFilenameLabel"></span>
+          <span class="rec-badge" id="studyBadge">Idle</span>
+        </div>
+      </div>
+      <div class="content-grid">
+        <!-- LEFT: Upload + Controls -->
+        <div class="control-panel">
+          <div class="drop-zone" id="studyDropZone"
+            ondragover="onStudyDragOver(event)"
+            ondragleave="onStudyDragLeave()"
+            ondrop="onStudyDrop(event)"
+            onclick="onStudyZoneClick(event)">
+            <input type="file" id="studyFileInput" accept=".pdf,.docx,.doc,.txt"
+              style="display:none" onchange="onStudyFileSelect(event)" onclick="event.stopPropagation()"/>
+            <div class="drop-icon">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zM5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82z"/>
+              </svg>
+            </div>
+            <div class="drop-main" id="studyDropMain">Drop PDF, DOCX, or TXT</div>
+            <div class="drop-sub">PDF · DOCX · TXT — max 20MB</div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="field-group">
+            <label class="field-label">Study Mode</label>
+            <div class="toggle-group">
+              <button type="button" class="toggle on study-mode-btn" data-mode="explain" onclick="setStudyMode('explain')">Explain</button>
+              <button type="button" class="toggle study-mode-btn" data-mode="keypoints" onclick="setStudyMode('keypoints')">Key Points</button>
+              <button type="button" class="toggle study-mode-btn" data-mode="quiz" onclick="setStudyMode('quiz')">Quiz Me</button>
+            </div>
+          </div>
+
+          <button type="button" class="btn-primary" id="studyUploadBtn" onclick="studyUpload()" disabled>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3z"/></svg>
+            Analyze Material
+          </button>
+
+          <!-- Stats -->
+          <div id="studyStats" style="display:none;margin-top:12px;padding:12px;background:var(--bg3);border-radius:10px;border:1px solid var(--border)">
+            <div style="font-size:11px;color:var(--text3);margin-bottom:6px;font-weight:600">DOCUMENT INFO</div>
+            <div style="display:flex;gap:16px">
+              <div>
+                <div style="font-size:18px;font-weight:700;color:var(--accent)" id="studyWordCount">—</div>
+                <div style="font-size:11px;color:var(--text3)">words</div>
+              </div>
+              <div>
+                <div style="font-size:18px;font-weight:700;color:var(--purple)" id="studyCharCount">—</div>
+                <div style="font-size:11px;color:var(--text3)">characters</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Output -->
+        <div class="output-area" id="studyOutputArea">
+          <div class="progress-bar" id="studyProgress" style="display:none"><div class="progress-fill"></div></div>
+          <div class="progress-msg" id="studyProgressMsg" style="display:none">Processing…</div>
+
+          <!-- Empty state -->
+          <div class="results-empty" id="studyEmpty">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zM5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82z"/></svg>
+            <p>Upload a document to start studying</p>
+          </div>
+
+          <!-- Results -->
+          <div id="studyOutput" style="display:none;flex-direction:column;gap:12px">
+
+            <!-- Keywords / Topics -->
+            <div class="result-card">
+              <div class="result-card-head"><span>📌 Topics & Keywords</span></div>
+              <div class="result-card-body" id="studyKeywordsContainer"></div>
+            </div>
+
+            <!-- Summary -->
+            <div class="result-card">
+              <div class="result-card-head">
+                <span>📝 AI Summary</span>
+                <button type="button" class="icon-action" onclick="copyText('studySummaryText')">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>
+                </button>
+              </div>
+              <div class="result-card-body" id="studySummaryText"></div>
+            </div>
+
+            <!-- Chat -->
+            <div class="result-card" style="flex:1">
+              <div class="result-card-head">
+                <span>💬 Ask About This Material</span>
+                <div style="display:flex;gap:6px">
+                  <button type="button" class="toggle on study-mode-btn" data-mode="explain" onclick="setStudyMode('explain')" style="font-size:11px;padding:2px 10px">Explain</button>
+                  <button type="button" class="toggle study-mode-btn" data-mode="keypoints" onclick="setStudyMode('keypoints')" style="font-size:11px;padding:2px 10px">Key Points</button>
+                  <button type="button" class="toggle study-mode-btn" data-mode="quiz" onclick="setStudyMode('quiz')" style="font-size:11px;padding:2px 10px">Quiz</button>
+                </div>
+              </div>
+              <div class="result-card-body" style="padding:0;display:flex;flex-direction:column;height:320px">
+                <div id="studyChatMessages" style="
+                  flex:1;overflow-y:auto;padding:14px;
+                  display:flex;flex-direction:column;gap:10px;
+                ">
+                  <div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">
+                    📚 Upload a document to start chatting
+                  </div>
+                </div>
+                <div style="border-top:1px solid var(--border);padding:10px;display:flex;gap:8px">
+                  <input id="studyChatInput" type="text"
+                    placeholder="Ask anything about this material…"
+                    style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);outline:none;font-family:inherit"
+                    onkeydown="if(event.key==='Enter') studyAsk()"
+                  />
+                  <button onclick="studyAsk()" style="
+                    background:var(--purple);color:#fff;border:none;border-radius:8px;
+                    padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;
+                  ">Ask</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
     </div>
 
   </main>
