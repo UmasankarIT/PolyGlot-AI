@@ -1624,6 +1624,7 @@ function _ragAddMessage(role, text, id) {
   div.textContent = text;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
+  }
 
 
 /* ════════════════════════════════════════════════════════════════
