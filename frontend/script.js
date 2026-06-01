@@ -339,6 +339,16 @@ async function runSentiment() {
     const data = await r.json();
     renderSentimentResult(data);
     addSentimentHistory(text, data);
+    await _pushHistory({
+      date: new Date().toLocaleString(),
+      lang: "Sentiment AI",
+      transcript: text,
+      translation: data.summary || data.sentiment,
+      duration: 0,
+      source: "sentiment",
+      filename: ""
+    });
+
     toast("Sentiment analyzed!", "success");
   } catch (err) {
     toast("Sentiment failed: " + err.message, "error");
@@ -807,8 +817,12 @@ async function renderHistory() {
         <span class="history-lang">${escapeHtml(s.lang)}</span>
         <span class="history-date">${escapeHtml(s.date)}</span>
         ${s.duration ? `<span class="history-dur">${Math.floor(s.duration/60)}m ${s.duration%60}s</span>` : ""}
-        <span class="history-lang" style="${s.source==='file'?'background:rgba(29,158,117,0.12);color:var(--green2)':'background:rgba(226,75,74,0.1);color:var(--red)'}">
-          ${s.source==='file'?'📁 file':'🎙️ live'}
+        <span class="history-lang" style="${s.source==='file'|| s.source==='study'|| s.source==='sentiment'?'background:rgba(29,158,117,0.12);color:var(--green2)':'background:rgba(226,75,74,0.1);color:var(--red)'}">
+          ${
+            s.source === "file" ? "📁 file" :
+            s.source === "study" ? "📚 study" :
+            s.source === "sentiment" ? "😊 sentiment" :"🎙️ live"
+          }
         </span>
       </div>
       ${s.filename?`<div style="font-size:11px;color:var(--text3);margin-bottom:3px">📁 ${escapeHtml(s.filename)}</div>`:""}
@@ -1698,6 +1712,16 @@ async function studyUpload() {
 
     document.getElementById("studyBadge").textContent = "Ready";
     document.getElementById("studyBadge").className = "rec-badge";
+    await _pushHistory({
+      date: new Date().toLocaleString(),
+      lang: "Study Assistant",
+      transcript: data.summary,
+      translation: "",
+      duration: 0,
+      source: "study",
+      filename: data.filename
+    });
+
     toast("✅ Material analyzed — start asking questions!", "success");
 
   } catch (err) {
