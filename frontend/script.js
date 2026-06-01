@@ -1781,5 +1781,3 @@ function setStudyMode(mode) {
     b.classList.toggle("on", b.dataset.mode === mode);
   });
 }
-
-}
