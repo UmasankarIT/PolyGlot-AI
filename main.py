@@ -23,7 +23,7 @@ from backend.services.keywords import extract_keywords
 from backend.services.agent import router as agent_router
 from backend.services.rag import router as rag_router
 from backend.services.study import router as study_router
-from backend.services.chapters_profiling import router as analyze_router
+from backend.services.chapter_profiling import router as analyze_router
 from backend.auth import (
     init_db, get_current_user,
     register_user, login_user,
