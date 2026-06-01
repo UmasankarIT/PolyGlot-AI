@@ -19,6 +19,7 @@
   <div class="splash-glow g2"></div>
   <div class="splash-glow g3"></div>
 
+  <!-- NAV -->
   <nav class="splash-nav">
     <div class="splash-logo">
       <div class="splash-logo-icon">
@@ -37,23 +38,23 @@
     </div>
   </nav>
 
+  <!-- HERO -->
   <div class="splash-center">
     <div class="splash-eyebrow">
       <span class="eyebrow-dot"></span>
-      Groq · Whisper Large v3 · LLaMA 3.3 70B
+      Powered by Groq · Whisper · LLaMA 3.3 70B
     </div>
 
     <h1 class="splash-h1">
-      Break every<br/>
-      <span class="splash-h1-grad">language barrier.</span>
+      Speak in any language.<br/>
+      <span class="splash-h1-grad">Be understood everywhere.</span>
     </h1>
 
     <p class="splash-p">
-      Speak. We transcribe, translate, and analyze — instantly.<br/>
-      40+ languages. Real-time. Free.
+      Real-time transcription, translation, and AI analysis.<br/>
+      40+ languages. No install. Free.
     </p>
 
-    <!-- Live demo waveform -->
     <div class="splash-demo-wave">
       <div class="sdw-bar"></div><div class="sdw-bar"></div><div class="sdw-bar"></div>
       <div class="sdw-bar"></div><div class="sdw-bar"></div><div class="sdw-bar"></div>
@@ -67,65 +68,42 @@
 
     <button type="button" class="splash-cta" onclick="startApp()">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3zm-1 15.93V20H9v2h6v-2h-2v-2.07A8 8 0 0 0 20 10h-2a6 6 0 0 1-12 0H4a8 8 0 0 0 7 7.93z"/></svg>
-      Launch App — It's Free
+      Open App
     </button>
-    <div class="splash-cta-sub">No install · Works in browser · Chrome recommended</div>
-  </div>
+    <div class="splash-cta-sub">Works in browser · No sign-up required · Chrome recommended</div>
 
-  <!-- Feature grid -->
-  <div class="splash-features-grid">
-    <div class="sfg-card">
-      <div class="sfg-icon" style="background:rgba(127,119,221,0.15);color:#7f77dd">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10a7 7 0 0 1-14 0" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+    <!-- Stats row -->
+    <div class="splash-stats">
+      <div class="splash-stat">
+        <span class="splash-stat-num">40+</span>
+        <span class="splash-stat-label">Languages</span>
       </div>
-      <div class="sfg-title">🎙️ Live Translation</div>
-      <div class="sfg-desc">Speak → instant transcript + streaming translation. Zero delay.</div>
-    </div>
-    <div class="sfg-card">
-      <div class="sfg-icon" style="background:rgba(29,158,117,0.15);color:#3dcba0">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <div class="splash-stat-divider"></div>
+      <div class="splash-stat">
+        <span class="splash-stat-num">&lt;1s</span>
+        <span class="splash-stat-label">Latency</span>
       </div>
-      <div class="sfg-title">💬 Conversation Mode</div>
-      <div class="sfg-desc">Two people, two languages. Each hears the other in their own language.</div>
-    </div>
-    <div class="sfg-card">
-      <div class="sfg-icon" style="background:rgba(239,159,39,0.15);color:#ef9f27">
-        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="9" r="1.2"/><circle cx="15" cy="9" r="1.2"/></svg>
+      <div class="splash-stat-divider"></div>
+      <div class="splash-stat">
+        <span class="splash-stat-num">5</span>
+        <span class="splash-stat-label">AI Models</span>
       </div>
-      <div class="sfg-title">😊 Sentiment AI</div>
-      <div class="sfg-desc">Detect emotion and tone — joy, anger, fear, calm — in any speech.</div>
-    </div>
-    <div class="sfg-card">
-      <div class="sfg-icon" style="background:rgba(212,83,126,0.15);color:#d4537e">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13z"/></svg>
+      <div class="splash-stat-divider"></div>
+      <div class="splash-stat">
+        <span class="splash-stat-num">Free</span>
+        <span class="splash-stat-label">Forever</span>
       </div>
-      <div class="sfg-title">📄 File Upload</div>
-      <div class="sfg-desc">Upload any audio — lecture, meeting, interview — get transcript + translation.</div>
-    </div>
-    <div class="sfg-card">
-      <div class="sfg-icon" style="background:rgba(99,179,237,0.15);color:#63b3ed">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-      </div>
-      <div class="sfg-title">📝 AI Summaries</div>
-      <div class="sfg-desc">One-click AI summary with speaker notes from any audio or transcript.</div>
-    </div>
-    <div class="sfg-card">
-      <div class="sfg-icon" style="background:rgba(154,117,237,0.15);color:#9a75ed">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 3a9 9 0 0 0-9 9H1l4 4 4-4H6a7 7 0 1 1 2.07 4.94l-1.42 1.42A9 9 0 1 0 13 3zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
-      </div>
-      <div class="sfg-title">📚 Session History</div>
-      <div class="sfg-desc">Every session saved. Sign in to sync across devices. Export PDF or TXT.</div>
     </div>
   </div>
 
   <!-- Language ticker -->
   <div class="splash-ticker">
     <div class="splash-ticker-inner">
-      <span>Hindi · Telugu · Tamil · Arabic · Japanese · French · Spanish · Korean · German · Chinese · Russian · Turkish · Urdu · Malayalam · Bengali · Portuguese · Italian · Dutch</span>
-      <span>Hindi · Telugu · Tamil · Arabic · Japanese · French · Spanish · Korean · German · Chinese · Russian · Turkish · Urdu · Malayalam · Bengali · Portuguese · Italian · Dutch</span>
+      <span>Hindi · Telugu · Tamil · Arabic · Japanese · French · Spanish · Korean · German · Chinese · Russian · Turkish · Urdu · Malayalam · Bengali · Portuguese · Italian · Dutch · Hindi · Telugu · Tamil · Arabic · Japanese · French · Spanish · Korean · German · Chinese · Russian · Turkish · Urdu · Malayalam · Bengali · Portuguese · Italian · Dutch</span>
     </div>
   </div>
 </div>
+
 
 <!-- ══════════════════════════════════════════════════════════
      AUTH MODAL — Full-screen cinematic login
@@ -771,13 +749,14 @@
           <div id="studyOutput" style="display:none;flex-direction:column;gap:12px">
 
             <!-- Keywords / Topics -->
-            <div class="result-card">
+            <div class="result-card resizable-card" id="studyKeywordsCard">
               <div class="result-card-head"><span>📌 Topics & Keywords</span></div>
               <div class="result-card-body" id="studyKeywordsContainer"></div>
+              <div class="resize-handle" onmousedown="initResize(event,'studyKeywordsCard')">⠿</div>
             </div>
 
             <!-- Summary -->
-            <div class="result-card">
+            <div class="result-card resizable-card" id="studySummaryCard">
               <div class="result-card-head">
                 <span>📝 AI Summary</span>
                 <button type="button" class="icon-action" onclick="copyText('studySummaryText')">
@@ -785,10 +764,11 @@
                 </button>
               </div>
               <div class="result-card-body" id="studySummaryText"></div>
+              <div class="resize-handle" onmousedown="initResize(event,'studySummaryCard')">⠿</div>
             </div>
 
             <!-- Chat -->
-            <div class="result-card" style="flex:1">
+            <div class="result-card resizable-card" id="studyChatCard" style="flex:1">
               <div class="result-card-head">
                 <span>💬 Ask About This Material</span>
                 <div style="display:flex;gap:6px">
@@ -818,6 +798,7 @@
                   ">Ask</button>
                 </div>
               </div>
+              <div class="resize-handle" onmousedown="initResize(event,'studyChatCard')">⠿</div>
             </div>
 
           </div>
@@ -831,5 +812,37 @@
 <div class="toast" id="toast"></div>
 <script src="live_realtime.js"></script>
 <script src="script.js"></script>
+
+<script>
+/* ── Resizable Cards ────────────────────────────────────────── */
+function initResize(e, cardId) {
+  e.preventDefault();
+  const card   = document.getElementById(cardId);
+  const handle = e.target;
+  const startY = e.clientY;
+  const startH = card.offsetHeight;
+
+  handle.classList.add('dragging');
+  document.body.style.cursor = 'ns-resize';
+  document.body.style.userSelect = 'none';
+
+  function onMove(e) {
+    const newH = Math.max(80, startH + (e.clientY - startY));
+    card.style.height = newH + 'px';
+    card.style.flex = 'none';
+  }
+
+  function onUp() {
+    handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  }
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+</script>
 </body>
 </html>

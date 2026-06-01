@@ -956,12 +956,18 @@ async function processFile() {
       if (!tr.ok) throw new Error("Transcription failed");
       const trData = await tr.json();
       fileResults.transcript = trData.transcript;
+      fileResults.segments = trData.segments || [];
       if (trData.detected_language)
-        document.getElementById("fileDetectedLang").textContent = `Detected: ${trData.detected_language.toUpperCase()}`;
+        showLanguageConfidence(trData.detected_language, trData.language_confidence || null);
     }
 
     const transcript = fileResults.transcript;
     if (options.transcript) showCard("transcript", transcript);
+
+    // Auto-chapters if segments available
+    if (fileResults.segments && fileResults.segments.length > 4) {
+      generateChapters(fileResults.segments, transcript).catch(()=>{});
+    }
 
     if (options.translation) {
       if (fileResults.translations[lang]) {
@@ -1254,7 +1260,7 @@ async function agentAnalyze() {
     await ragStore(data.transcript, data.session_id, document.getElementById("fileLang").value);
     setTimeout(() => document.getElementById("ragChatCard")?.scrollIntoView({behavior:"smooth"}), 500);
     if (data.detected_lang)
-      document.getElementById("fileDetectedLang").textContent = `Detected: ${data.detected_lang.toUpperCase()}`;
+      showLanguageConfidence(data.detected_lang, null);
 
     // Show suggestion panel
     _showAgentPanel(data.suggestions, lang, data.duration_secs, data.word_count);
@@ -1804,4 +1810,155 @@ function setStudyMode(mode) {
   document.querySelectorAll(".study-mode-btn").forEach(b => {
     b.classList.toggle("on", b.dataset.mode === mode);
   });
+
+/* ════════════════════════════════════════════════════════════════
+   NEW FEATURES FRONTEND — PolyglotAI v5.4
+   1. Language Identification Confidence
+   2. Auto-Chapters
+   3. Speaker Profiling
+   
+   Paste at bottom of script.js
+   ════════════════════════════════════════════════════════════════ */
+
+// ── 1. Language Confidence Display ───────────────────────────────
+function showLanguageConfidence(lang, confidence) {
+  const el = document.getElementById("fileDetectedLang");
+  if (!el) return;
+  if (confidence !== null && confidence !== undefined) {
+    el.innerHTML = `Detected: <strong>${lang.toUpperCase()}</strong> <span style="color:var(--green2);font-size:11px">${confidence}% confident</span>`;
+  } else {
+    el.textContent = `Detected: ${lang.toUpperCase()}`;
+  }
+}
+
+
+// ── 2. Auto-Chapters ──────────────────────────────────────────────
+async function generateChapters(segments, transcript) {
+  if (!segments || segments.length < 5) return;
+
+  try {
+    const res = await fetch(`${API}/analyze/chapters`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ segments, transcript }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.chapters && data.chapters.length > 1) {
+      showChapters(data.chapters);
+    }
+  } catch (e) {
+    console.warn("[Chapters] Failed:", e);
+  }
+}
+
+function showChapters(chapters) {
+  // Remove old card if exists
+  document.getElementById("chaptersCard")?.remove();
+
+  const card = document.createElement("div");
+  card.id = "chaptersCard";
+  card.className = "result-card";
+  card.style.cssText = "margin-bottom:0";
+
+  const items = chapters.map((ch, i) => `
+    <div style="display:flex;align-items:center;gap:12px;padding:8px 0;${i < chapters.length-1 ? 'border-bottom:1px solid var(--border)' : ''}">
+      <span style="
+        background:var(--purple-dim);color:var(--purple);
+        border-radius:6px;padding:3px 8px;font-size:11px;
+        font-weight:700;font-family:'JetBrains Mono',monospace;
+        white-space:nowrap;min-width:44px;text-align:center;
+      ">${ch.time_fmt}</span>
+      <span style="font-size:13px;color:var(--text)">${escapeHtml(ch.title)}</span>
+    </div>
+  `).join("");
+
+  card.innerHTML = `
+    <div class="result-card-head">
+      <span>📑 Auto-Chapters</span>
+      <span style="font-size:11px;color:var(--text3)">${chapters.length} chapters</span>
+    </div>
+    <div class="result-card-body" style="padding:4px 16px">${items}</div>
+  `;
+
+  // Insert after transcript card
+  const transcriptCard = document.getElementById("card-transcript");
+  if (transcriptCard) {
+    transcriptCard.parentNode.insertBefore(card, transcriptCard.nextSibling);
+  } else {
+    const resultsBody = document.getElementById("resultsBody") || document.querySelector(".output-area");
+    if (resultsBody) resultsBody.prepend(card);
+  }
+}
+
+
+// ── 3. Speaker Profiling ──────────────────────────────────────────
+async function generateSpeakerProfiles(diarizedSegments) {
+  if (!diarizedSegments || diarizedSegments.length < 2) return;
+
+  // Check if multiple speakers
+  const speakers = new Set(diarizedSegments.map(s => s.speaker));
+  if (speakers.size < 2) return;
+
+  try {
+    const res = await fetch(`${API}/analyze/speaker-profiles`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        diarized_segments: diarizedSegments,
+        dialogue: diarizedSegments.map(s => `${s.speaker}: ${s.text}`).join("\n"),
+      }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.profiles) showSpeakerProfiles(data.profiles);
+  } catch (e) {
+    console.warn("[Profiling] Failed:", e);
+  }
+}
+
+function showSpeakerProfiles(profiles) {
+  document.getElementById("speakerProfilesCard")?.remove();
+
+  const SPEAKER_COLORS = ["var(--purple)", "var(--green2)", "var(--amber)", "#63b3ed"];
+
+  const cards = Object.entries(profiles).map(([speaker, profile], i) => {
+    const color = SPEAKER_COLORS[i % SPEAKER_COLORS.length];
+    const traits = (profile.traits || []).map(t =>
+      `<span style="background:var(--bg4);border:1px solid var(--border);border-radius:20px;padding:2px 10px;font-size:11px;color:var(--text2)">${escapeHtml(t)}</span>`
+    ).join("");
+
+    return `
+      <div style="padding:14px;background:var(--bg3);border-radius:10px;border:1px solid var(--border);margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <div style="width:32px;height:32px;border-radius:50%;background:${color}22;border:2px solid ${color};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:${color}">
+            ${speaker.replace("Speaker ", "")}
+          </div>
+          <div>
+            <div style="font-weight:600;font-size:13px;color:var(--text)">${escapeHtml(speaker)}</div>
+            <div style="font-size:11px;color:var(--text3)">${escapeHtml(profile.tone || "")} · ${escapeHtml(profile.vocabulary || "")} vocabulary</div>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:8px;font-style:italic">"${escapeHtml(profile.summary || "")}"</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px">${traits}</div>
+      </div>
+    `;
+  }).join("");
+
+  const card = document.createElement("div");
+  card.id = "speakerProfilesCard";
+  card.className = "result-card";
+  card.innerHTML = `
+    <div class="result-card-head">
+      <span>👥 Speaker Profiles</span>
+      <span style="font-size:11px;color:var(--text3)">${Object.keys(profiles).length} speakers</span>
+    </div>
+    <div class="result-card-body">${cards}</div>
+  `;
+
+  // Insert after diarization card or transcript
+  const outputArea = document.getElementById("resultsBody") || document.querySelector(".output-area");
+  if (outputArea) outputArea.appendChild(card);
+}
+
 }

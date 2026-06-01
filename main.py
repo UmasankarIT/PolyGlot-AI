@@ -23,6 +23,7 @@ from backend.services.keywords import extract_keywords
 from backend.services.agent import router as agent_router
 from backend.services.rag import router as rag_router
 from backend.services.study import router as study_router
+from backend.services.chapters_profiling import router as analyze_router
 from backend.auth import (
     init_db, get_current_user,
     register_user, login_user,
@@ -52,6 +53,7 @@ app.include_router(ws_router)
 app.include_router(agent_router)
 app.include_router(rag_router)
 app.include_router(study_router)
+app.include_router(analyze_router)
 
 ALLOWED_EXTS   = {"mp3", "wav", "m4a", "mp4", "webm", "ogg", "flac", "aac"}
 MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -143,7 +145,12 @@ async def transcribe(request: Request, file: UploadFile = File(...)):
     result = await transcribe_audio(audio_bytes, file.filename)
     if not result["text"]:
         raise HTTPException(500, "Whisper returned empty transcript.")
-    return {"transcript": result["text"], "detected_language": result["language"]}
+    return {
+        "transcript":        result["text"],
+        "detected_language": result["language"],
+        "language_confidence": result.get("language_confidence", None),
+        "segments":          result.get("segments", []),
+    }
 
 
 # ── Translate ─────────────────────────────────────────────────────
