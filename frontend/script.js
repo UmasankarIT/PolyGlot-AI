@@ -1624,7 +1624,7 @@ function _ragAddMessage(role, text, id) {
   div.textContent = text;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
-
+}
 
 /* ════════════════════════════════════════════════════════════════
    STUDY ASSISTANT — PolyglotAI v5.3
@@ -1780,6 +1780,4 @@ function setStudyMode(mode) {
   document.querySelectorAll(".study-mode-btn").forEach(b => {
     b.classList.toggle("on", b.dataset.mode === mode);
   });
-}
-
 }
