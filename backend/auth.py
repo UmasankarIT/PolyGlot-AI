@@ -6,7 +6,7 @@ auth.py  —  PolyglotAI Authentication
 - Per-user session history stored in DB
 """
 
-import os, sqlite3, bcrypt, json
+import os, bcrypt, json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -14,6 +14,9 @@ from jose import JWTError, jwt
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
+
+# DB layer: SQLite locally, Postgres in production (DATABASE_URL).
+from backend.db import get_db, is_postgres
 
 # ── Config ───────────────────────────────────────────────────────────
 
@@ -31,7 +34,6 @@ if _IS_PROD and SECRET_KEY == _DEV_SECRET:
 
 ALGORITHM   = "HS256"
 TOKEN_HOURS = 24
-DB_PATH     = Path(__file__).parent / "polyglot.db"
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -58,18 +60,16 @@ class HistoryEntry(BaseModel):
 
 
 # ── DB setup ─────────────────────────────────────────────────────────
-
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    return conn
+# get_db() comes from backend.db (SQLite locally / Postgres in prod).
 
 def init_db():
     """Create tables if they don't exist. Called at app startup."""
+    # Auto-increment primary key differs by dialect.
+    pk = "SERIAL PRIMARY KEY" if is_postgres() else "INTEGER PRIMARY KEY AUTOINCREMENT"
     conn = get_db()
-    conn.executescript("""
+    conn.executescript(f"""
         CREATE TABLE IF NOT EXISTS users (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            id           {pk},
             username     TEXT    UNIQUE NOT NULL,
             display_name TEXT    NOT NULL DEFAULT '',
             password_hash TEXT   NOT NULL,
@@ -77,7 +77,7 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS history (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            id           {pk},
             user_id      INTEGER NOT NULL REFERENCES users(id),
             date         TEXT    NOT NULL,
             lang         TEXT    NOT NULL,
@@ -147,12 +147,17 @@ def register_user(req: RegisterRequest) -> dict:
             raise HTTPException(400, "Username already taken")
 
         hashed = hash_password(req.password)
-        cursor = conn.execute(
-            "INSERT INTO users (username, display_name, password_hash, created_at) VALUES (?,?,?,?)",
-            (req.username.lower(), req.display_name or req.username, hashed, datetime.utcnow().isoformat())
-        )
+        params = (req.username.lower(), req.display_name or req.username, hashed, datetime.utcnow().isoformat())
+        if is_postgres():
+            cursor = conn.execute(
+                "INSERT INTO users (username, display_name, password_hash, created_at) "
+                "VALUES (?,?,?,?) RETURNING id", params)
+            user_id = cursor.fetchone()["id"]
+        else:
+            cursor = conn.execute(
+                "INSERT INTO users (username, display_name, password_hash, created_at) VALUES (?,?,?,?)", params)
+            user_id = cursor.lastrowid
         conn.commit()
-        user_id = cursor.lastrowid
         token   = create_token(user_id, req.username.lower())
         return {
             "token":        token,

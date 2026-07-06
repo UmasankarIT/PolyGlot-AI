@@ -15,7 +15,8 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from backend.auth import get_db, decode_token
+from backend.db import get_db, is_postgres
+from backend.auth import decode_token
 
 # Safety cap so a public instance can't grow unbounded. Newest rows are kept.
 MAX_SESSIONS_PER_KIND = 1000
@@ -46,13 +47,26 @@ def save_session(session_id: str, kind: str, content: str,
     """Persist (or replace) a session's text and metadata."""
     conn = get_db()
     try:
-        conn.execute(
-            """INSERT OR REPLACE INTO doc_sessions
-               (session_id, user_id, kind, filename, content, meta, created_at)
-               VALUES (?,?,?,?,?,?,?)""",
-            (session_id, user_id, kind, filename, content,
-             json.dumps(meta or {}), datetime.utcnow().isoformat()),
-        )
+        params = (session_id, user_id, kind, filename, content,
+                  json.dumps(meta or {}), datetime.utcnow().isoformat())
+        if is_postgres():
+            conn.execute(
+                """INSERT INTO doc_sessions
+                   (session_id, user_id, kind, filename, content, meta, created_at)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT (session_id) DO UPDATE SET
+                     user_id=EXCLUDED.user_id, kind=EXCLUDED.kind,
+                     filename=EXCLUDED.filename, content=EXCLUDED.content,
+                     meta=EXCLUDED.meta, created_at=EXCLUDED.created_at""",
+                params,
+            )
+        else:
+            conn.execute(
+                """INSERT OR REPLACE INTO doc_sessions
+                   (session_id, user_id, kind, filename, content, meta, created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                params,
+            )
         # Evict oldest beyond the cap for this kind.
         conn.execute(
             """DELETE FROM doc_sessions
