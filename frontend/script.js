@@ -100,6 +100,7 @@ function switchTab(name) {
   const pageEl = document.getElementById("page-" + name);
   if (navEl)  navEl.classList.add("active");
   if (pageEl) pageEl.classList.add("active");
+  if (name === "study" && typeof loadStudyDocuments === "function") loadStudyDocuments();
 }
 
 /* ── RTL ───────────────────────────────────────────────────────── */
@@ -112,7 +113,17 @@ function applyRTL(lang) {
     el.dir = dir; el.style.textAlign = isRTL ? "right" : "left";
   });
 }
-function onLiveLangChange() { applyRTL(document.getElementById("liveLang").value); }
+function onLiveLangChange() {
+  const lang = document.getElementById("liveLang").value;
+  applyRTL(lang);
+  // If a live session is running, the target language was only sent to the server
+  // at connect time — reconnect the WebSocket so new speech translates to the new
+  // language. (Already-shown chunks keep their original translation.)
+  if (typeof isLive !== "undefined" && isLive && typeof openWebSocket === "function") {
+    closeWebSocket();
+    openWebSocket(lang);
+  }
+}
 function onFileLangChange() { applyRTL(document.getElementById("fileLang").value); }
 
 /* ── Keyboard shortcuts ────────────────────────────────────────── */
@@ -1489,7 +1500,7 @@ async function ragStore(transcript, sessionId, lang) {
   try {
     await fetch(`${API}/rag/store`, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
         session_id:    sessionId,
         transcript:    transcript,
@@ -1589,33 +1600,47 @@ async function ragAsk() {
   // Add user message
   _ragAddMessage("user", question);
 
-  // Add loading indicator
-  const loadingId = "rag-loading-" + Date.now();
-  _ragAddMessage("assistant", "Thinking…", loadingId);
+  // Assistant message we stream tokens into
+  const msgId = "rag-" + Date.now();
+  _ragAddMessage("assistant", "…", msgId);
+  const msgEl = document.getElementById(msgId);
+  const box   = document.getElementById("ragMessages");
 
   try {
-    const res = await fetch(`${API}/rag/ask`, {
+    const res = await fetch(`${API}/rag/ask/stream`, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
         session_id: ragSessionId,
         question:   question,
         language:   ragLanguage,
       }),
     });
-
-    if (!res.ok) throw new Error("RAG request failed");
-    const data = await res.json();
-
-    // Replace loading with answer
-    const loadingEl = document.getElementById(loadingId);
-    if (loadingEl) loadingEl.remove();
-    _ragAddMessage("assistant", data.answer);
+    if (!res.ok || !res.body) throw new Error("RAG request failed");
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "", full = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n"); buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const raw = line.slice(6).trim();
+        if (raw === "[DONE]") continue;
+        let parsed; try { parsed = JSON.parse(raw); } catch { continue; }
+        if (parsed.token) {
+          full += parsed.token;
+          if (msgEl) msgEl.textContent = full;
+          if (box) box.scrollTop = box.scrollHeight;
+        }
+      }
+    }
+    if (msgEl && !full.trim()) msgEl.textContent = "Sorry, could not get an answer. Try again.";
 
   } catch (err) {
-    const loadingEl = document.getElementById(loadingId);
-    if (loadingEl) loadingEl.remove();
-    _ragAddMessage("assistant", "Sorry, could not get an answer. Try again.");
+    if (msgEl) msgEl.textContent = "Sorry, could not get an answer. Try again.";
     console.warn("[RAG] Ask failed:", err);
   } finally {
     input.disabled = false;
@@ -1651,7 +1676,6 @@ function _ragAddMessage(role, text, id) {
    ════════════════════════════════════════════════════════════════ */
 
 let studySessionId   = "";
-let studyMode        = "explain";
 
 function onStudyDragOver(e)  { e.preventDefault(); document.getElementById("studyDropZone").classList.add("drag-over"); }
 function onStudyDragLeave()  { document.getElementById("studyDropZone").classList.remove("drag-over"); }
@@ -1689,7 +1713,7 @@ async function studyUpload() {
   try {
     const fd = new FormData();
     fd.append("file", file);
-    const res = await fetch(`${API}/study/upload`, { method: "POST", body: fd });
+    const res = await fetch(`${API}/study/upload`, { method: "POST", headers: authHeaders(), body: fd });
     if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Upload failed"); }
     const data = await res.json();
 
@@ -1728,6 +1752,7 @@ async function studyUpload() {
       filename: data.filename
     });
 
+    loadStudyDocuments();   // refresh the saved-documents list
     toast("✅ Material analyzed — start asking questions!", "success");
 
   } catch (err) {
@@ -1744,15 +1769,97 @@ async function studyUpload() {
 }
 
 function _renderStudyKeywords(kw) {
-  if (!kw) return;
   const container = document.getElementById("studyKeywordsContainer");
   if (!container) return;
-  const topics   = (kw.topics   || []).map(t => `<span style="background:var(--purple);color:#fff;border-radius:20px;padding:3px 12px;font-size:12px;font-weight:600">${escapeHtml(t)}</span>`).join("");
-  const keywords = (kw.keywords || []).map(k => `<span style="background:var(--surface);color:var(--text2);border-radius:20px;padding:3px 10px;font-size:12px;border:1px solid var(--border)">${escapeHtml(k)}</span>`).join("");
+  const section = document.getElementById("studyConceptsSection");
+  kw = kw || {};
+  const topics   = (kw.topics   || []);
+  const keywords = (kw.keywords || []);
+
+  if (!topics.length && !keywords.length && !kw.tag) {
+    if (section) section.style.display = "none";
+    container.innerHTML = "";
+    return;
+  }
+  if (section) section.style.display = "block";
+
+  const topicChips = topics.map(t =>
+    `<span class="concept-topic">${escapeHtml(t)}</span>`).join("");
+  const kwChips = keywords.map(k =>
+    `<span class="concept-chip">${escapeHtml(k)}</span>`).join("");
+
   container.innerHTML = `
-    ${kw.tag ? `<div style="font-size:12px;color:var(--text2);font-style:italic;margin-bottom:8px">📌 ${escapeHtml(kw.tag)}</div>` : ""}
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">${topics}</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px">${keywords}</div>`;
+    ${kw.tag ? `<div class="concept-tag">${escapeHtml(kw.tag)}</div>` : ""}
+    ${topics.length ? `
+      <div class="concept-group">
+        <div class="concept-group-label">Topics</div>
+        <div class="concept-row">${topicChips}</div>
+      </div>` : ""}
+    ${keywords.length ? `
+      <div class="concept-group">
+        <div class="concept-group-label">Concepts &amp; Terms</div>
+        <div class="concept-row">${kwChips}</div>
+      </div>` : ""}`;
+}
+
+/* ── My Documents (persisted study docs) ──────────────────────────── */
+async function loadStudyDocuments() {
+  const section = document.getElementById("studyDocsSection");
+  const list    = document.getElementById("studyDocsList");
+  if (!section || !list) return;
+  // Only meaningful for logged-in users (guests aren't tied to saved docs)
+  if (!authToken || !currentUser) { section.style.display = "none"; return; }
+
+  try {
+    const res = await fetch(`${API}/study/list`, { headers: authHeaders() });
+    if (!res.ok) { section.style.display = "none"; return; }
+    const docs = (await res.json()).documents || [];
+    if (!docs.length) { section.style.display = "none"; return; }
+
+    section.style.display = "block";
+    const countEl = document.getElementById("studyDocsCount");
+    if (countEl) countEl.textContent = `${docs.length}`;
+
+    list.innerHTML = docs.map(d => {
+      const wc   = (d.meta && d.meta.word_count) ? `${Number(d.meta.word_count).toLocaleString()} words` : "";
+      const when = d.created_at ? new Date(d.created_at + "Z").toLocaleDateString() : "";
+      const sub  = [wc, when].filter(Boolean).join(" · ");
+      return `<button type="button" class="study-doc-item" onclick="openStudyDocument('${encodeURIComponent(d.session_id)}')">
+        <span class="sdi-icon">📄</span>
+        <span class="sdi-main">
+          <span class="sdi-name">${escapeHtml(d.filename || "Document")}</span>
+          <span class="sdi-sub">${escapeHtml(sub)}</span>
+        </span>
+      </button>`;
+    }).join("");
+  } catch { section.style.display = "none"; }
+}
+
+async function openStudyDocument(sid) {
+  try {
+    const res = await fetch(`${API}/study/session/${sid}`, { headers: authHeaders() });
+    if (!res.ok) { toast("Could not open document", "error"); return; }
+    const data = await res.json();
+
+    studySessionId = data.session_id;
+    document.getElementById("studyEmpty").style.display  = "none";
+    document.getElementById("studyOutput").style.display = "flex";
+    document.getElementById("studyStats").style.display  = "block";
+    document.getElementById("studyWordCount").textContent = (data.word_count || 0).toLocaleString();
+    document.getElementById("studyCharCount").textContent = (data.char_count || 0).toLocaleString();
+    const fn = document.getElementById("studyFilenameLabel");
+    if (fn) fn.textContent = data.filename || "";
+
+    _renderStudyKeywords(data.keywords);
+    document.getElementById("studySummaryText").textContent = data.summary || "";
+    document.getElementById("studyChatMessages").innerHTML = `
+      <div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">
+        📚 Reopened “${escapeHtml(data.filename || "document")}” — ask anything about it!
+      </div>`;
+    document.getElementById("studyBadge").textContent = "Ready";
+    document.getElementById("studyBadge").className   = "rec-badge";
+    toast("📄 Document reopened", "success");
+  } catch { toast("Could not open document", "error"); }
 }
 
 async function studyAsk() {
@@ -1764,22 +1871,41 @@ async function studyAsk() {
   input.value    = "";
   input.disabled = true;
   _addStudyMsg("user", question);
-  const loadId = "sl-" + Date.now();
-  _addStudyMsg("assistant", "Thinking…", loadId);
+  const msgId = "sm-" + Date.now();
+  _addStudyMsg("assistant", "…", msgId);
+  const msgEl   = document.getElementById(msgId);
+  const msgsBox = document.getElementById("studyChatMessages");
 
   try {
-    const res = await fetch(`${API}/study/ask`, {
+    const res = await fetch(`${API}/study/ask/stream`, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: studySessionId, question, mode: studyMode }),
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ session_id: studySessionId, question, mode: "tutor" }),
     });
-    if (!res.ok) throw new Error("Failed");
-    const data = await res.json();
-    document.getElementById(loadId)?.remove();
-    _addStudyMsg("assistant", data.answer);
+    if (!res.ok || !res.body) throw new Error("Failed");
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "", full = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n"); buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const raw = line.slice(6).trim();
+        if (raw === "[DONE]") continue;
+        let parsed; try { parsed = JSON.parse(raw); } catch { continue; }
+        if (parsed.token) {
+          full += parsed.token;
+          if (msgEl) msgEl.textContent = full;
+          if (msgsBox) msgsBox.scrollTop = msgsBox.scrollHeight;
+        }
+      }
+    }
+    if (msgEl && !full.trim()) msgEl.textContent = "Sorry, couldn't get an answer. Try again.";
   } catch {
-    document.getElementById(loadId)?.remove();
-    _addStudyMsg("assistant", "Sorry, couldn't get an answer. Try again.");
+    if (msgEl) msgEl.textContent = "Sorry, couldn't get an answer. Try again.";
   } finally {
     input.disabled = false;
     input.focus();
@@ -1805,11 +1931,133 @@ function _addStudyMsg(role, text, id) {
   c.scrollTop = c.scrollHeight;
 }
 
-function setStudyMode(mode) {
-  studyMode = mode;
-  document.querySelectorAll(".study-mode-btn").forEach(b => {
-    b.classList.toggle("on", b.dataset.mode === mode);
-  });
+/* ── Quick-ask suggestion chips ───────────────────────────────────── */
+function studyQuickAsk(text) {
+  const input = document.getElementById("studyChatInput");
+  if (!input) return;
+  if (!studySessionId) { toast("Please upload a file first", "error"); return; }
+  input.value = text;
+  studyAsk();
+}
+
+/* ════════════════════════════════════════════════════════════════
+   STUDY QUIZ — generate → answer → score
+   ════════════════════════════════════════════════════════════════ */
+let studyQuiz = { questions: [], answers: [], submitted: false };
+
+async function startStudyQuiz() {
+  if (!studySessionId) { toast("Upload a document first", "error"); return; }
+  const card = document.getElementById("studyQuizCard");
+  const body = document.getElementById("studyQuizBody");
+  const btn  = document.getElementById("studyQuizBtn");
+  const scoreEl = document.getElementById("studyQuizScore");
+  if (scoreEl) scoreEl.style.display = "none";
+
+  card.style.display = "block";
+  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  body.innerHTML = `<div class="quiz-loading"><span class="quiz-spinner"></span> Generating your quiz…</div>`;
+  if (btn) { btn.disabled = true; btn.textContent = "Generating…"; }
+
+  try {
+    const res = await fetch(`${API}/study/quiz`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ session_id: studySessionId, num_questions: 5 }),
+    });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.detail || "Quiz failed"); }
+    const data = await res.json();
+    studyQuiz = { questions: data.questions || [], answers: [], submitted: false };
+    if (!studyQuiz.questions.length) throw new Error("No questions generated");
+    _renderStudyQuiz();
+  } catch (err) {
+    body.innerHTML = `<div class="quiz-loading">⚠️ ${escapeHtml(err.message)}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = "🧠 Take Quiz"; }
+  }
+}
+
+function _renderStudyQuiz() {
+  const body = document.getElementById("studyQuizBody");
+  const q = studyQuiz;
+  const items = q.questions.map((item, qi) => {
+    const opts = item.options.map((opt, oi) => {
+      const picked  = q.answers[qi] === oi;
+      const correct = item.answer === oi;
+      let cls = "quiz-option";
+      if (q.submitted) {
+        if (correct) cls += " correct";
+        else if (picked) cls += " wrong";
+      } else if (picked) cls += " picked";
+      return `<button type="button" class="${cls}" ${q.submitted ? "disabled" : ""}
+                onclick="pickQuizAnswer(${qi},${oi})">
+                <span class="quiz-opt-letter">${String.fromCharCode(65+oi)}</span>
+                <span>${escapeHtml(opt)}</span>
+              </button>`;
+    }).join("");
+    const expl = (q.submitted && item.explanation)
+      ? `<div class="quiz-explain">${q.answers[qi]===item.answer ? "✅" : "❌"} ${escapeHtml(item.explanation)}</div>`
+      : "";
+    return `<div class="quiz-q">
+        <div class="quiz-q-title"><span class="quiz-q-num">${qi+1}</span>${escapeHtml(item.question)}</div>
+        <div class="quiz-options">${opts}</div>
+        ${expl}
+      </div>`;
+  }).join("");
+
+  const footer = q.submitted
+    ? `<button type="button" class="btn-primary quiz-action" onclick="startStudyQuiz()">Retake Quiz</button>`
+    : `<button type="button" class="btn-primary quiz-action" onclick="submitStudyQuiz()">Submit Answers</button>`;
+
+  body.innerHTML = items + `<div class="quiz-footer">${footer}</div>`;
+}
+
+function pickQuizAnswer(qi, oi) {
+  if (studyQuiz.submitted) return;
+  studyQuiz.answers[qi] = oi;
+  _renderStudyQuiz();
+}
+
+function submitStudyQuiz() {
+  const q = studyQuiz;
+  const unanswered = q.questions.some((_, i) => q.answers[i] === undefined);
+  if (unanswered) { toast("Answer all questions first", "error"); return; }
+  q.submitted = true;
+  const score = q.questions.reduce((s, item, i) => s + (q.answers[i] === item.answer ? 1 : 0), 0);
+  const total = q.questions.length;
+  const pct   = Math.round((score / total) * 100);
+  const scoreEl = document.getElementById("studyQuizScore");
+  if (scoreEl) {
+    scoreEl.style.display = "inline-flex";
+    scoreEl.textContent = `${score}/${total} · ${pct}%`;
+    scoreEl.className = "study-quiz-score " + (pct >= 70 ? "good" : pct >= 40 ? "ok" : "bad");
+  }
+  _renderStudyQuiz();
+  const msg = pct >= 70 ? "🎉 Great job!" : pct >= 40 ? "Keep studying — you're getting there!" : "Review the material and try again.";
+  toast(`${msg} Score: ${score}/${total}`, pct >= 70 ? "success" : "");
+}
+
+function closeStudyQuiz() {
+  document.getElementById("studyQuizCard").style.display = "none";
+}
+
+/* ════════════════════════════════════════════════════════════════
+   SIDEBAR COLLAPSE TOGGLE
+   ════════════════════════════════════════════════════════════════ */
+function toggleSidebar() {
+  const app = document.getElementById("app");
+  if (!app) return;
+  const collapsed = app.classList.toggle("nav-collapsed");
+  localStorage.setItem("sidebar_collapsed", collapsed ? "1" : "0");
+}
+// Restore collapsed state on load
+(function () {
+  if (localStorage.getItem("sidebar_collapsed") === "1") {
+    document.addEventListener("DOMContentLoaded", () => {
+      const app = document.getElementById("app");
+      if (app) app.classList.add("nav-collapsed");
+    });
+  }
+})();
 
 /* ════════════════════════════════════════════════════════════════
    NEW FEATURES FRONTEND — PolyglotAI v5.4
@@ -1959,6 +2207,4 @@ function showSpeakerProfiles(profiles) {
   // Insert after diarization card or transcript
   const outputArea = document.getElementById("resultsBody") || document.querySelector(".output-area");
   if (outputArea) outputArea.appendChild(card);
-}
-
 }

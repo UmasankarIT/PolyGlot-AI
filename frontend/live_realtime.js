@@ -22,6 +22,7 @@ let wsReady       = false;
 let mediaStream   = null;
 let audioContext  = null;
 let processor     = null;
+let liveIdToSlot  = {};   // maps a final-chunk id → its slot index, so async translations land in the right row
 
 // Convert API URL to WebSocket URL
 // https://polyglot.onrender.com → wss://polyglot.onrender.com/ws/live
@@ -66,29 +67,49 @@ function openWebSocket(targetLanguage) {
       }
 
       if (data.type === "final") {
-        // Complete sentence — clear interim, add to chunk log
+        // Complete sentence — show the transcript IMMEDIATELY.
+        // The translation arrives separately (type "translation") so recognition
+        // never waits on the LLM.
         clearInterim();
-        const { transcript, translation } = data;
+        const { transcript, id } = data;
         if (!transcript) return;
 
         chunkCounter++;
         const slotIndex = liveTranscriptChunks.length;
         liveTranscriptChunks.push(transcript);
-        liveTranslationChunks.push(translation || "");
-        liveTranscriptFull  = liveTranscriptChunks.join("\n");
-        liveTranslationFull = liveTranslationChunks.filter(Boolean).join("\n");
+        // Back-compat: newer server sends translation:"" here + a separate
+        // "translation" message; older server sends it inline. Handle both.
+        liveTranslationChunks.push(data.translation || "");
+        if (id !== undefined && id !== null) liveIdToSlot[id] = slotIndex;
+        liveTranscriptFull = liveTranscriptChunks.join("\n");
 
-        setLiveText("transcript",  liveTranscriptFull);
-        setLiveText("translation", liveTranslationFull);
+        setLiveText("transcript", liveTranscriptFull);
         applyRTL(document.getElementById("liveLang").value);
-        addChunkLogEntry(chunkCounter, transcript, translation || "", slotIndex);
-        updateChunkLogTranslation(slotIndex, translation || "");
+        addChunkLogEntry(chunkCounter, transcript, "", slotIndex);   // shows "translating…"
+        if (data.translation) {
+          liveTranslationFull = liveTranslationChunks.filter(Boolean).join("\n");
+          setLiveText("translation", liveTranslationFull);
+          updateChunkLogTranslation(slotIndex, data.translation);
+        }
 
         const sentBtn = document.getElementById("liveSentimentBtn");
         if (sentBtn) sentBtn.style.display = "flex";
 
         const badge = document.getElementById("recBadge");
         if (badge) { badge.textContent = "Recording"; badge.className = "rec-badge recording"; }
+        return;
+      }
+
+      if (data.type === "translation") {
+        // Async translation for a previously-shown final chunk.
+        const slotIndex = liveIdToSlot[data.id];
+        if (slotIndex === undefined) return;
+        liveTranslationChunks[slotIndex] = data.translation || "";
+        liveTranslationFull = liveTranslationChunks.filter(Boolean).join("\n");
+        setLiveText("translation", liveTranslationFull);
+        applyRTL(document.getElementById("liveLang").value);
+        updateChunkLogTranslation(slotIndex, data.translation || "");
+        return;
       }
 
     } catch (e) {
@@ -223,6 +244,7 @@ async function startLive() {
   if (isLive) return;
   isLive   = true;
   liveSecs = 0;
+  liveIdToSlot = {};
 
   const lang = document.getElementById("liveLang")?.value || "Hindi";
 
