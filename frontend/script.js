@@ -2041,6 +2041,152 @@ function closeStudyQuiz() {
 }
 
 /* ════════════════════════════════════════════════════════════════
+   STUDY FLASHCARDS — flip, mark, spaced re-queue, progress (persisted)
+   ════════════════════════════════════════════════════════════════ */
+let studyFlash = null;   // { cards, queue, masteredCount, flipped }
+
+function _flashKey() { return "flash_" + studySessionId; }
+
+function _saveFlash() {
+  try {
+    if (studyFlash) localStorage.setItem(_flashKey(), JSON.stringify({
+      cards: studyFlash.cards, queue: studyFlash.queue, masteredCount: studyFlash.masteredCount,
+    }));
+  } catch {}
+}
+
+async function startStudyFlashcards() {
+  if (!studySessionId) { toast("Upload a document first", "error"); return; }
+  const card = document.getElementById("studyFlashcardsCard");
+  card.style.display = "block";
+  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  // Resume a saved deck for this document if one exists.
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(_flashKey()) || "null"); } catch {}
+  if (saved && Array.isArray(saved.cards) && saved.cards.length) {
+    studyFlash = { cards: saved.cards, queue: saved.queue || [], masteredCount: saved.masteredCount || 0, flipped: false };
+    _renderFlashcard();
+    return;
+  }
+
+  await _fetchFlashDeck();
+}
+
+async function _fetchFlashDeck() {
+  const body = document.getElementById("studyFlashBody");
+  const btn  = document.getElementById("studyFlashBtn");
+  body.innerHTML = `<div class="quiz-loading"><span class="quiz-spinner"></span> Building your flashcards…</div>`;
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`${API}/study/flashcards`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ session_id: studySessionId, num_cards: 10 }),
+    });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.detail || "Flashcards failed"); }
+    const data = await res.json();
+    const cards = data.cards || [];
+    if (!cards.length) throw new Error("No flashcards generated");
+    studyFlash = { cards, queue: cards.map((_, i) => i), masteredCount: 0, flipped: false };
+    _saveFlash();
+    _renderFlashcard();
+  } catch (err) {
+    body.innerHTML = `<div class="quiz-loading">⚠️ ${escapeHtml(err.message)}</div>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function _renderFlashcard() {
+  const body = document.getElementById("studyFlashBody");
+  const prog = document.getElementById("studyFlashProgress");
+  const f = studyFlash;
+  const total = f.cards.length;
+
+  if (prog) { prog.style.display = "inline-flex"; prog.textContent = `${f.masteredCount}/${total} mastered`; }
+
+  if (!f.queue.length) { _flashDone(); return; }
+
+  const idx = f.queue[0];
+  const cardData = f.cards[idx];
+  const remaining = f.queue.length;
+  const face = f.flipped ? cardData.back : cardData.front;
+  const hint = f.flipped ? "ANSWER" : "TERM";
+
+  body.innerHTML = `
+    <div class="flash-topbar">
+      <span>${remaining} card${remaining === 1 ? "" : "s"} left this round</span>
+      <span>${f.masteredCount}/${total} mastered</span>
+    </div>
+    <div class="flashcard ${f.flipped ? "flipped" : ""}" onclick="flipFlashcard()">
+      <div class="flash-face-label">${hint}</div>
+      <div class="flash-face-text">${escapeHtml(face)}</div>
+      ${!f.flipped ? `<div class="flash-tap">👆 tap to reveal answer</div>` : ""}
+    </div>
+    ${f.flipped ? `
+      <div class="flash-actions">
+        <button type="button" class="flash-btn again" onclick="markFlashcard(false)">↻ Review again</button>
+        <button type="button" class="flash-btn got" onclick="markFlashcard(true)">✓ Got it</button>
+      </div>` : `
+      <div class="flash-actions">
+        <button type="button" class="flash-btn reveal" onclick="flipFlashcard()">Show answer</button>
+      </div>`}
+  `;
+}
+
+function flipFlashcard() {
+  if (!studyFlash) return;
+  studyFlash.flipped = !studyFlash.flipped;
+  _renderFlashcard();
+}
+
+function markFlashcard(known) {
+  const f = studyFlash;
+  if (!f || !f.queue.length) return;
+  const idx = f.queue.shift();
+  if (known) f.masteredCount++;
+  else f.queue.push(idx);   // spaced re-queue: send to the back to see again
+  f.flipped = false;
+  _saveFlash();
+  _renderFlashcard();
+}
+
+function _flashDone() {
+  const body = document.getElementById("studyFlashBody");
+  const total = studyFlash.cards.length;
+  body.innerHTML = `
+    <div class="flash-done">
+      <div class="flash-done-emoji">🎉</div>
+      <div class="flash-done-title">Deck complete!</div>
+      <div class="flash-done-sub">You mastered all ${total} cards.</div>
+      <div class="flash-done-actions">
+        <button type="button" class="btn-primary quiz-action" onclick="restartFlashcards()">Study again</button>
+        <button type="button" class="flash-btn again" onclick="newFlashDeck()">New deck</button>
+      </div>
+    </div>`;
+}
+
+function restartFlashcards() {
+  if (!studyFlash) return;
+  studyFlash.queue = studyFlash.cards.map((_, i) => i);
+  studyFlash.masteredCount = 0;
+  studyFlash.flipped = false;
+  _saveFlash();
+  _renderFlashcard();
+}
+
+function newFlashDeck() {
+  try { localStorage.removeItem(_flashKey()); } catch {}
+  studyFlash = null;
+  _fetchFlashDeck();
+}
+
+function closeStudyFlashcards() {
+  document.getElementById("studyFlashcardsCard").style.display = "none";
+}
+
+/* ════════════════════════════════════════════════════════════════
    SIDEBAR COLLAPSE TOGGLE
    ════════════════════════════════════════════════════════════════ */
 function toggleSidebar() {

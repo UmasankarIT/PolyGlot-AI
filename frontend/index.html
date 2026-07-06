@@ -905,9 +905,14 @@
             <div class="result-card resizable-card" id="studyChatCard" style="flex:1">
               <div class="result-card-head">
                 <span>💬 Learn — Chat With This Material</span>
-                <button type="button" class="study-quiz-btn" id="studyQuizBtn" onclick="startStudyQuiz()">
-                  🧠 Take Quiz
-                </button>
+                <div style="display:flex;gap:6px">
+                  <button type="button" class="study-quiz-btn ghost" id="studyFlashBtn" onclick="startStudyFlashcards()">
+                    🃏 Flashcards
+                  </button>
+                  <button type="button" class="study-quiz-btn" id="studyQuizBtn" onclick="startStudyQuiz()">
+                    🧠 Take Quiz
+                  </button>
+                </div>
               </div>
               <div class="result-card-body" style="padding:0;display:flex;flex-direction:column;height:340px">
                 <div id="studyChatMessages" style="
@@ -952,6 +957,20 @@
               <div class="result-card-body" id="studyQuizBody" style="max-height:none"></div>
             </div>
 
+            <!-- Flashcards -->
+            <div class="result-card" id="studyFlashcardsCard" style="display:none">
+              <div class="result-card-head">
+                <span>🃏 Flashcards</span>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span id="studyFlashProgress" class="study-flash-progress" style="display:none"></span>
+                  <button type="button" class="icon-action" onclick="closeStudyFlashcards()" title="Close flashcards">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="result-card-body" id="studyFlashBody" style="max-height:none"></div>
+            </div>
+
           </div>
         </div>
       </div>
@@ -961,8 +980,8 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<script src="live_realtime.js?v=59"></script>
-<script src="script.js?v=59"></script>
+<script src="live_realtime.js?v=60"></script>
+<script src="script.js?v=60"></script>
 
 <script>
 /* ── Resizable Cards ────────────────────────────────────────── */

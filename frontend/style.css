@@ -1485,3 +1485,73 @@ html, body {
 }
 .quiz-footer { display: flex; justify-content: center; padding-top: 6px; }
 .quiz-action { margin: 0 !important; min-width: 180px; }
+
+/* ── ghost variant of the header pill button (Flashcards) ────────── */
+.study-quiz-btn.ghost {
+  background: var(--bg3); color: var(--text2);
+  box-shadow: none; border: 1px solid var(--border2);
+}
+.study-quiz-btn.ghost:hover:not(:disabled) {
+  color: var(--purple); border-color: var(--purple); background: var(--purple-dim);
+  box-shadow: none;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   STUDY FLASHCARDS
+   ════════════════════════════════════════════════════════════════ */
+.study-flash-progress {
+  display: inline-flex; align-items: center;
+  font-size: 12px; font-weight: 700; padding: 3px 11px; border-radius: 20px;
+  background: var(--purple-dim); color: var(--purple); letter-spacing: 0.3px;
+}
+.flash-topbar {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px; color: var(--text3); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;
+}
+.flashcard {
+  position: relative; cursor: pointer; user-select: none;
+  min-height: 168px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  padding: 26px 22px; border-radius: 14px;
+  background: linear-gradient(155deg, rgba(139,92,246,0.10), rgba(34,211,238,0.06)), var(--bg2);
+  border: 1px solid var(--border2);
+  box-shadow: var(--card-shadow);
+  transition: transform 0.15s, border-color 0.2s;
+}
+.flashcard:hover { border-color: var(--purple); transform: translateY(-2px); }
+.flashcard.flipped {
+  background: linear-gradient(155deg, rgba(61,203,160,0.12), rgba(34,211,238,0.06)), var(--bg2);
+  border-color: rgba(61,203,160,0.4);
+}
+.flash-face-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text3); margin-bottom: 12px;
+}
+.flashcard.flipped .flash-face-label { color: var(--green2); }
+.flash-face-text {
+  font-size: 17px; font-weight: 600; line-height: 1.5; color: var(--text);
+  overflow-wrap: anywhere;
+}
+.flashcard.flipped .flash-face-text { font-size: 15px; font-weight: 500; }
+.flash-tap { margin-top: 14px; font-size: 11px; color: var(--text3); }
+
+.flash-actions { display: flex; gap: 10px; margin-top: 14px; }
+.flash-btn {
+  flex: 1; padding: 11px; border-radius: var(--r-sm); cursor: pointer; font-family: inherit;
+  font-size: 13px; font-weight: 600; border: 1px solid var(--border2);
+  background: var(--bg3); color: var(--text2); transition: all 0.15s;
+}
+.flash-btn:hover { transform: translateY(-1px); }
+.flash-btn.reveal { background: var(--accent-grad); color: #fff; border: none; box-shadow: 0 5px 16px rgba(139,92,246,0.3); }
+.flash-btn.again  { border-color: var(--amber); color: var(--amber); background: rgba(245,166,35,0.10); }
+.flash-btn.again:hover { background: rgba(245,166,35,0.18); }
+.flash-btn.got    { border-color: var(--green2); color: var(--green2); background: rgba(61,203,160,0.10); }
+.flash-btn.got:hover { background: rgba(61,203,160,0.18); }
+
+.flash-done { text-align: center; padding: 26px 16px; }
+.flash-done-emoji { font-size: 42px; }
+.flash-done-title { font-size: 18px; font-weight: 700; color: var(--text); margin-top: 8px; }
+.flash-done-sub { font-size: 13px; color: var(--text2); margin-top: 4px; }
+.flash-done-actions { display: flex; gap: 10px; justify-content: center; align-items: center; margin-top: 18px; flex-wrap: wrap; }
+.flash-done-actions .flash-btn { flex: 0 0 auto; min-width: 120px; }

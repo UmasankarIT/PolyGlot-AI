@@ -52,6 +52,11 @@ class StudyQuizRequest(BaseModel):
     num_questions: int = 5
 
 
+class StudyFlashcardsRequest(BaseModel):
+    session_id: str
+    num_cards:  int = 10
+
+
 # ── Text Extractors ───────────────────────────────────────────────
 
 def _extract_pdf(data: bytes) -> str:
@@ -309,6 +314,70 @@ async def study_quiz(request: Request, req: StudyQuizRequest,
         raise HTTPException(500, "Could not generate a quiz from this material.")
 
     return {"session_id": req.session_id, "questions": clean}
+
+
+FLASHCARDS_SYSTEM = """You are an expert educator who writes effective study flashcards.
+
+Given study material, create flashcards that help a student memorise and understand
+the key CONCEPTS. Each card has a short prompt on the front and a clear answer on the back.
+
+Return ONLY a valid JSON object of this exact shape:
+{
+  "cards": [
+    { "front": "<a concept, term, or question>", "back": "<the definition/explanation/answer>" }
+  ]
+}
+
+STRICT RULES:
+- Return ONLY valid JSON. No markdown fences, no extra text.
+- Focus on CONCEPTS, terms, methods, and ideas — never trivia about names of people or dates.
+- Front should be short (a term or a focused question). Back should be a concise, complete answer.
+- Make cards self-contained and answerable from the material.
+"""
+
+
+@router.post("/study/flashcards")
+@limiter.limit("15/minute")
+async def study_flashcards(request: Request, req: StudyFlashcardsRequest,
+                           credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme)):
+    """Generate study flashcards (front/back) from the uploaded material."""
+    text = _authorize(req.session_id, "study", credentials)
+
+    n = max(4, min(int(req.num_cards or 10), 20))
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+    def _call():
+        return client.chat.completions.create(
+            model=GROQ_LLM_MODEL,
+            messages=[
+                {"role": "system", "content": FLASHCARDS_SYSTEM},
+                {"role": "user", "content":
+                    f"Create {n} flashcards from this material:\n\n{text[:10000]}"},
+            ],
+            temperature=0.4,
+            max_tokens=2048,
+            response_format={"type": "json_object"},
+            **llm_call_kwargs(),
+        )
+
+    try:
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(None, _call)
+        data = json.loads(response.choices[0].message.content.strip())
+    except Exception as e:
+        raise HTTPException(500, f"Flashcard generation failed: {str(e)}")
+
+    clean = []
+    for c in (data.get("cards") or []):
+        front = str(c.get("front", "")).strip()
+        back  = str(c.get("back", "")).strip()
+        if front and back:
+            clean.append({"front": front, "back": back})
+
+    if not clean:
+        raise HTTPException(500, "Could not generate flashcards from this material.")
+
+    return {"session_id": req.session_id, "cards": clean}
 
 
 @router.get("/study/list")
