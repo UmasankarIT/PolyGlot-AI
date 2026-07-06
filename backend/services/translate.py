@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from groq import Groq
 from typing import AsyncGenerator
+from backend.config import GROQ_LLM_MODEL, llm_call_kwargs
 
 LANGUAGE_MAP = {
     "English": "English",
@@ -42,9 +43,14 @@ def is_hallucination(text: str) -> bool:
     return cleaned in HALLUCINATION_PHRASES or len(text.strip()) < 3
 
 def _max_tokens(text: str) -> int:
-    """Cap output tokens to prevent LLaMA from over-generating."""
+    """
+    Cap output tokens to prevent over-generating, but keep a generous floor:
+    reasoning models (gpt-oss) need headroom beyond the visible answer or they
+    return empty/refusal on short inputs. 256 floor fixes that at no real cost
+    (max_tokens is a ceiling, not a target).
+    """
     word_count = len(text.split())
-    return max(64, min(word_count * 5, 2048))
+    return max(256, min(word_count * 8, 2048))
 
 def _truncate_input(text: str) -> str:
     """FIX: guard against extremely large inputs that exceed LLaMA context."""
@@ -54,15 +60,14 @@ def _truncate_input(text: str) -> str:
 
 def _system_prompt(lang_full: str) -> str:
     return (
-        f"You are a professional translator. Translate the given text to {lang_full}. "
-        "Output ONLY the direct translation. "
+        f"You are a professional translation engine. Translate the user's text into {lang_full}. "
         "CRITICAL RULES: "
-        "1. Never repeat words or phrases. "
-        "2. Never add words that were not in the original. "
-        "3. The translation must be proportional in length to the input — "
-        "short input means short output. "
-        "4. Do not explain, paraphrase, or elaborate. "
-        "5. Return ONLY the translated text, nothing else."
+        "1. Output ONLY the translation — no notes, no explanation, no quotes, no preamble. "
+        "2. Translate EVERYTHING you are given, even a single word, a fragment, or an "
+        "incomplete sentence. If the input is one word, translate that one word. "
+        "3. NEVER ask for clarification, NEVER say you need more text, NEVER refuse. "
+        "4. Never repeat words, and never add words that were not in the original. "
+        "5. Keep the translation about the same length as the input."
     )
 
 async def translate_text(text: str, target_language: str) -> str:
@@ -74,13 +79,14 @@ async def translate_text(text: str, target_language: str) -> str:
 
     def _call():
         return client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=GROQ_LLM_MODEL,
             messages=[
                 {"role": "system", "content": _system_prompt(lang_full)},
                 {"role": "user",   "content": safe_text},
             ],
             temperature=0.1,
             max_tokens=_max_tokens(safe_text),
+            **llm_call_kwargs(),
         )
 
     # FIX: use get_running_loop() instead of deprecated get_event_loop()
@@ -105,7 +111,7 @@ async def translate_text_stream(text: str, target_language: str) -> AsyncGenerat
     def _stream_to_queue():
         try:
             stream = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=GROQ_LLM_MODEL,
                 messages=[
                     {"role": "system", "content": _system_prompt(lang_full)},
                     {"role": "user",   "content": safe_text},
@@ -113,6 +119,7 @@ async def translate_text_stream(text: str, target_language: str) -> AsyncGenerat
                 temperature=0.1,
                 max_tokens=_max_tokens(safe_text),
                 stream=True,
+                **llm_call_kwargs(),
             )
             for chunk in stream:
                 token = chunk.choices[0].delta.content

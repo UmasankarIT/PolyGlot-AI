@@ -49,11 +49,7 @@ async def agent_analyze(
     if len(audio_bytes) > MAX_FILE_BYTES:
         raise HTTPException(400, "File too large. Max 25MB.")
 
-    # Transcribe + extract keywords in parallel
-    result, kw = await asyncio.gather(
-        transcribe_audio(audio_bytes, file.filename),
-        asyncio.sleep(0),  # placeholder, keywords run after transcribe
-    )
+    result = await transcribe_audio(audio_bytes, file.filename)
 
     transcript = result["text"].strip()
     detected   = result["language"] or ""

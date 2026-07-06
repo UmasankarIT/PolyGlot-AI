@@ -17,7 +17,18 @@ from pydantic import BaseModel
 
 # ── Config ───────────────────────────────────────────────────────────
 
-SECRET_KEY  = os.getenv("JWT_SECRET", "polyglot-dev-secret-change-in-production")
+_DEV_SECRET = "polyglot-dev-secret-change-in-production"
+SECRET_KEY  = os.getenv("JWT_SECRET", _DEV_SECRET)
+
+# Fail hard in production if the secret is missing/default — a known secret means
+# anyone can forge login tokens for any user. Render sets RENDER=true automatically.
+_IS_PROD = bool(os.getenv("RENDER") or os.getenv("PRODUCTION") or os.getenv("FRONTEND_URL"))
+if _IS_PROD and SECRET_KEY == _DEV_SECRET:
+    raise RuntimeError(
+        "JWT_SECRET is not set in production. Refusing to start with the public dev secret. "
+        "Set a strong JWT_SECRET environment variable."
+    )
+
 ALGORITHM   = "HS256"
 TOKEN_HOURS = 24
 DB_PATH     = Path(__file__).parent / "polyglot.db"

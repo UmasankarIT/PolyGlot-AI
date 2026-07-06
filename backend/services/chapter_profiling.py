@@ -10,6 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from groq import Groq
+from backend.config import GROQ_LLM_MODEL, llm_call_kwargs
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from slowapi import Limiter
@@ -85,14 +86,15 @@ async def auto_chapters(request: Request, req: ChaptersRequest):
 
     def _call():
         return client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=GROQ_LLM_MODEL,
             messages=[
                 {"role": "system", "content": CHAPTERS_PROMPT},
                 {"role": "user", "content": f"Transcript with timestamps:\n\n{timestamped[:6000]}"}
             ],
             temperature=0.1,
-            max_tokens=400,
+            max_tokens=700,
             response_format={"type": "json_object"},
+            **llm_call_kwargs(),
         )
 
     try:
@@ -177,14 +179,15 @@ async def speaker_profiles(request: Request, req: ProfilingRequest):
 
     def _call():
         return client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=GROQ_LLM_MODEL,
             messages=[
                 {"role": "system", "content": PROFILING_PROMPT},
                 {"role": "user", "content": f"Analyze these speakers:\n{sample[:5000]}"}
             ],
             temperature=0.2,
-            max_tokens=600,
+            max_tokens=900,
             response_format={"type": "json_object"},
+            **llm_call_kwargs(),
         )
 
     try:

@@ -3,13 +3,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from groq import Groq
+from backend.config import GROQ_LLM_MODEL, llm_call_kwargs
 
 async def summarize_text(text: str) -> str:
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
     def _call():
         return client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=GROQ_LLM_MODEL,
             messages=[
                 {
                     "role": "system",
@@ -26,6 +27,7 @@ async def summarize_text(text: str) -> str:
             ],
             temperature=0.3,
             max_tokens=512,
+            **llm_call_kwargs(),
         )
 
     # FIX: use get_running_loop() instead of deprecated get_event_loop()

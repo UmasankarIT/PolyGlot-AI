@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from groq import Groq
+from backend.config import GROQ_LLM_MODEL, llm_call_kwargs
 
 SYSTEM_PROMPT = """You are an expert speech emotion and sentiment analyzer.
 
@@ -35,14 +36,15 @@ async def analyze_sentiment(text: str) -> dict:
 
     def _call():
         return client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=GROQ_LLM_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": f"Analyze:\n\n{safe_text}"},
             ],
             temperature=0.1,
-            max_tokens=300,
+            max_tokens=512,
             response_format={"type": "json_object"},
+            **llm_call_kwargs(),
         )
 
     loop = asyncio.get_running_loop()

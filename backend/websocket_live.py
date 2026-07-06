@@ -38,6 +38,16 @@ async def websocket_live(websocket: WebSocket):
     result_queue = asyncio.Queue()
     target_language = "Hindi"
 
+    # Concurrent sends (background translations + the results loop) must be
+    # serialized — a WebSocket can't be written by two coroutines at once.
+    send_lock = asyncio.Lock()
+    translate_tasks: set = set()
+    final_counter = {"n": 0}
+
+    async def safe_send(payload: dict):
+        async with send_lock:
+            await websocket.send_text(json.dumps(payload))
+
     try:
         # First message = config
         config_raw = await websocket.receive_text()
@@ -62,13 +72,26 @@ async def websocket_live(websocket: WebSocket):
                     break
             await audio_queue.put(None)
 
+        async def translate_and_send(fid: int, transcript: str):
+            """Translate one final chunk in the background and send it keyed by id."""
+            translation = ""
+            try:
+                translation = await translate_text(transcript, target_language)
+            except Exception as e:
+                logger.warning(f"[WS] Translation failed: {e}")
+            await safe_send({
+                "type": "translation",
+                "id": fid,
+                "translation": (translation or "").strip(),
+            })
+
         async def send_results():
             while True:
                 result = await result_queue.get()
                 if result is None:
                     break
                 if "error" in result:
-                    await websocket.send_text(json.dumps({"type": "error", "message": result["error"]}))
+                    await safe_send({"type": "error", "message": result["error"]})
                     break
 
                 transcript = result.get("transcript", "").strip()
@@ -78,22 +101,24 @@ async def websocket_live(websocket: WebSocket):
 
                 if not is_final:
                     # Partial — send immediately, browser shows greyed out
-                    await websocket.send_text(json.dumps({
-                        "type": "interim", "transcript": transcript
-                    }))
+                    await safe_send({"type": "interim", "transcript": transcript})
                 else:
                     if is_hallucination(transcript):
                         continue
-                    translation = ""
-                    try:
-                        translation = await translate_text(transcript, target_language)
-                    except Exception as e:
-                        logger.warning(f"[WS] Translation failed: {e}")
-                    await websocket.send_text(json.dumps({
+                    # Send the transcript IMMEDIATELY so recognition feels instant,
+                    # then translate in the background (concurrently) and send the
+                    # translation later, matched by id.
+                    final_counter["n"] += 1
+                    fid = final_counter["n"]
+                    await safe_send({
                         "type": "final",
+                        "id": fid,
                         "transcript": transcript,
-                        "translation": translation.strip(),
-                    }))
+                        "translation": "",
+                    })
+                    task = asyncio.create_task(translate_and_send(fid, transcript))
+                    translate_tasks.add(task)
+                    task.add_done_callback(translate_tasks.discard)
 
         await asyncio.gather(receive_audio(), send_results())
 
@@ -102,10 +127,12 @@ async def websocket_live(websocket: WebSocket):
     except Exception as e:
         logger.error(f"[WS] Error: {e}")
         try:
-            await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
+            await safe_send({"type": "error", "message": str(e)})
         except Exception:
             pass
     finally:
         await audio_queue.put(None)
+        for t in list(translate_tasks):
+            t.cancel()
         if 'deepgram_task' in locals():
             deepgram_task.cancel()

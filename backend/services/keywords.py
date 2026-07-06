@@ -21,24 +21,27 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from groq import Groq
+from backend.config import GROQ_LLM_MODEL, llm_call_kwargs
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are an expert at analyzing spoken content and extracting key information.
+SYSTEM_PROMPT = """You are an expert at analyzing content and extracting the key CONCEPTS.
 
-Given a transcript, return ONLY a valid JSON object:
+Given a transcript or document, return ONLY a valid JSON object:
 {
-  "topics": [<2-4 broad topic strings, e.g. "Music", "Technology", "Health">],
-  "keywords": [<5-8 important specific words or short phrases from the text>],
-  "tag": <one short sentence (max 10 words) describing what this audio is about>
+  "topics": [<2-4 broad subject/theme strings, e.g. "Machine Learning", "Economics", "Biology">],
+  "keywords": [<5-8 important CONCEPTS, technical terms, or ideas from the text>],
+  "tag": <one short sentence (max 10 words) describing what this material is about>
 }
 
 STRICT RULES:
 - Return ONLY valid JSON. No markdown, no explanation, no extra text.
-- topics must be broad categories (1-2 words each)
-- keywords must be actual words/phrases from the transcript
-- tag must be under 10 words
-- Works for all languages — detect and extract in the same language as input
+- topics must be broad subject areas or themes (1-2 words each).
+- keywords must be CONCEPTS, technical terms, methods, or ideas — the things a student would need to understand.
+- NEVER include names of people, authors, speakers, organizations, brands, places, or dates. Concepts only.
+- Skip filler and generic words; prefer meaningful, subject-specific terms.
+- tag must be under 10 words.
+- Works for all languages — detect and extract in the same language as input.
 """
 
 async def extract_keywords(text: str) -> dict:
@@ -60,14 +63,15 @@ async def extract_keywords(text: str) -> dict:
 
     def _call():
         return client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=GROQ_LLM_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user",   "content": f"Extract from this transcript:\n\n{safe_text}"},
             ],
             temperature=0.1,
-            max_tokens=300,
+            max_tokens=512,
             response_format={"type": "json_object"},
+            **llm_call_kwargs(),
         )
 
     try:

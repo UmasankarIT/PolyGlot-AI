@@ -32,19 +32,33 @@ from backend.auth import (
     RegisterRequest, LoginRequest, HistoryEntry
 )
 from backend.websocket_live import router as ws_router
+from backend.store import init_store
 
 app = FastAPI(title="PolyglotAI API", version="5.3.0")
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-_FRONTEND_URL = os.getenv("FRONTEND_URL", "")
-_ALLOWED_ORIGINS = [_FRONTEND_URL] if _FRONTEND_URL else ["*"]
+# CORS — lock to configured origins in production, always allow localhost in dev.
+# Set ALLOWED_ORIGINS (comma-separated) or FRONTEND_URL on Render to your frontend's
+# real origin, e.g. "https://polyglotai.example.com".
+_env_origins = os.getenv("ALLOWED_ORIGINS") or os.getenv("FRONTEND_URL") or ""
+_ALLOWED_ORIGINS = [o.strip() for o in _env_origins.split(",") if o.strip()]
+_DEV_ORIGINS = [
+    "http://localhost:5500", "http://127.0.0.1:5500",
+    "http://localhost:5501", "http://127.0.0.1:5501",
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "http://localhost:8000", "http://127.0.0.1:8000",
+]
+if not os.getenv("RENDER"):                       # local dev — never lock yourself out
+    _ALLOWED_ORIGINS = list(dict.fromkeys(_ALLOWED_ORIGINS + _DEV_ORIGINS))
+if not _ALLOWED_ORIGINS:                          # last resort so a misconfig can't hard-break prod
+    _ALLOWED_ORIGINS = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=False,   # app authenticates via Authorization header, not cookies
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -64,6 +78,7 @@ async def startup_check():
     if not os.getenv("GROQ_API_KEY"):
         raise RuntimeError("GROQ_API_KEY is not set")
     init_db()
+    init_store()
 
 
 # ── Auth ──────────────────────────────────────────────────────────
