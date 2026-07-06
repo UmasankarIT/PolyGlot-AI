@@ -25,6 +25,9 @@
   --red:        #f2555a;
   --red-dim:    rgba(242,85,90,0.13);
   --amber:      #f5a623;
+  /* aliases used by some JS-rendered components (agent panel, stats, etc.) */
+  --surface:    var(--bg2);
+  --accent:     var(--purple);
   /* cinematic accents shared across every screen */
   --accent-grad:      linear-gradient(120deg, #8b5cf6, #6366f1 45%, #22d3ee);
   --accent-grad-soft: linear-gradient(120deg, rgba(139,92,246,0.16), rgba(34,211,238,0.11));
