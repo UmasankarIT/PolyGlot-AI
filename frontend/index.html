@@ -868,11 +868,6 @@
             </div>
           </div>
 
-          <!-- Key Concepts (compact, in left column) -->
-          <div id="studyConceptsSection" style="display:none;margin-top:16px;padding:0 2px">
-            <div class="field-label" style="margin-bottom:10px">🧩 Key Concepts</div>
-            <div id="studyKeywordsContainer" class="concept-panel"></div>
-          </div>
         </div>
 
         <!-- RIGHT: Output -->
@@ -889,6 +884,9 @@
           <!-- Results -->
           <div id="studyOutput" style="display:none;flex-direction:column;gap:12px">
 
+            <!-- Key Topics (up to 3) — click to open the mind map -->
+            <div id="studyTopicsStrip" class="topics-strip" style="display:none"></div>
+
             <!-- Summary -->
             <div class="result-card resizable-card" id="studySummaryCard">
               <div class="result-card-head">
@@ -902,7 +900,7 @@
             </div>
 
             <!-- Chat -->
-            <div class="result-card resizable-card" id="studyChatCard" style="flex:1">
+            <div class="result-card resizable-card" id="studyChatCard">
               <div class="result-card-head">
                 <span>💬 Learn — Chat With This Material</span>
                 <div style="display:flex;gap:6px">
@@ -979,9 +977,22 @@
   </main>
 </div>
 
+<!-- ══════════ CONCEPT MIND MAP MODAL ══════════ -->
+<div class="cmap-overlay" id="conceptMapOverlay" style="display:none" onclick="closeConceptMap(event)">
+  <div class="cmap-modal" onclick="event.stopPropagation()">
+    <div class="cmap-head">
+      <span class="cmap-title">🧠 Concept Map</span>
+      <button type="button" class="cmap-close" onclick="closeConceptMap()" title="Close" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div class="cmap-canvas" id="conceptMapCanvas"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
-<script src="live_realtime.js?v=61"></script>
-<script src="script.js?v=61"></script>
+<script src="live_realtime.js?v=62"></script>
+<script src="script.js?v=62"></script>
 
 <script>
 /* ── Resizable Cards ────────────────────────────────────────── */

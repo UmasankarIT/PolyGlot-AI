@@ -36,10 +36,16 @@ Given a transcript or document, return ONLY a valid JSON object:
 
 STRICT RULES:
 - Return ONLY valid JSON. No markdown, no explanation, no extra text.
-- topics must be broad subject areas or themes (1-2 words each).
-- keywords must be CONCEPTS, technical terms, methods, or ideas — the things a student would need to understand.
+- CRITICAL — GROUNDING: Only include topics and keywords that are ACTUALLY present or
+  explicitly discussed IN THE PROVIDED TEXT. Do NOT add related, adjacent, or commonly
+  associated concepts from your own background knowledge if they are not in the material.
+  If a term (e.g. a specific algorithm or method) is not mentioned in the text, do not list it.
+- Every keyword must be a term or phrase that appears in — or is directly described by — the text.
+- topics must be broad subject areas or themes the text is genuinely about (1-2 words each).
+- keywords must be CONCEPTS, technical terms, methods, or ideas the text actually covers.
 - NEVER include names of people, authors, speakers, organizations, brands, places, or dates. Concepts only.
-- Skip filler and generic words; prefer meaningful, subject-specific terms.
+- Prefer fewer, accurate keywords over many speculative ones. It is better to return 4 grounded
+  keywords than 8 that include guesses.
 - tag must be under 10 words.
 - Works for all languages — detect and extract in the same language as input.
 """

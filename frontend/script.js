@@ -1768,38 +1768,84 @@ async function studyUpload() {
   }
 }
 
-function _renderStudyKeywords(kw) {
-  const container = document.getElementById("studyKeywordsContainer");
-  if (!container) return;
-  const section = document.getElementById("studyConceptsSection");
-  kw = kw || {};
-  const topics   = (kw.topics   || []);
-  const keywords = (kw.keywords || []);
+let studyKeywords = null;   // last document's { topics, keywords, tag } — used by the mind map
 
-  if (!topics.length && !keywords.length && !kw.tag) {
-    if (section) section.style.display = "none";
-    container.innerHTML = "";
+function _renderStudyKeywords(kw) {
+  studyKeywords = kw || {};
+  const strip = document.getElementById("studyTopicsStrip");
+  if (!strip) return;
+
+  const topics   = (studyKeywords.topics   || []);
+  const keywords = (studyKeywords.keywords || []);
+
+  if (!topics.length && !keywords.length) {
+    strip.style.display = "none";
+    strip.innerHTML = "";
     return;
   }
-  if (section) section.style.display = "block";
 
-  const topicChips = topics.map(t =>
-    `<span class="concept-topic">${escapeHtml(t)}</span>`).join("");
-  const kwChips = keywords.map(k =>
-    `<span class="concept-chip">${escapeHtml(k)}</span>`).join("");
+  // Show up to 3 top topics as a strip; clicking anything opens the full mind map.
+  const top3 = topics.slice(0, 3);
+  const chips = top3.map(t =>
+    `<button type="button" class="topic-chip" onclick="openConceptMap()">${escapeHtml(t)}</button>`).join("");
 
-  container.innerHTML = `
-    ${kw.tag ? `<div class="concept-tag">${escapeHtml(kw.tag)}</div>` : ""}
-    ${topics.length ? `
-      <div class="concept-group">
-        <div class="concept-group-label">Topics</div>
-        <div class="concept-row">${topicChips}</div>
-      </div>` : ""}
-    ${keywords.length ? `
-      <div class="concept-group">
-        <div class="concept-group-label">Concepts &amp; Terms</div>
-        <div class="concept-row">${kwChips}</div>
-      </div>` : ""}`;
+  strip.style.display = "flex";
+  strip.innerHTML = `
+    <span class="topics-strip-label">Key topics</span>
+    ${chips}
+    <button type="button" class="topics-map-btn" onclick="openConceptMap()">🧠 Concept map</button>`;
+}
+
+/* ── Concept mind-map modal ───────────────────────────────────────── */
+function openConceptMap() {
+  const overlay = document.getElementById("conceptMapOverlay");
+  const canvas  = document.getElementById("conceptMapCanvas");
+  if (!overlay || !canvas || !studyKeywords) return;
+  canvas.innerHTML = _buildConceptMap(studyKeywords);
+  overlay.style.display = "flex";
+  document.body.style.overflow = "hidden";
+}
+
+function closeConceptMap(e) {
+  const overlay = document.getElementById("conceptMapOverlay");
+  if (!overlay) return;
+  overlay.style.display = "none";
+  document.body.style.overflow = "";
+}
+
+// Close on Escape
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const ov = document.getElementById("conceptMapOverlay");
+    if (ov && ov.style.display === "flex") closeConceptMap();
+  }
+});
+
+function _buildConceptMap(kw) {
+  const topics   = (kw.topics   || []).slice(0, 6);
+  const keywords = (kw.keywords || []);
+  const center   = (kw.tag && kw.tag.length <= 42) ? kw.tag
+                 : (topics[0] || "This Document");
+
+  // Distribute keywords round-robin under the topics as leaf branches.
+  const buckets = topics.map(() => []);
+  if (topics.length) keywords.forEach((k, i) => buckets[i % topics.length].push(k));
+  else buckets.push([...keywords]);
+
+  const branches = topics.length ? topics.map((t, i) => `
+    <div class="cmap-branch">
+      <div class="cmap-topic">${escapeHtml(t)}</div>
+      <div class="cmap-leaves">
+        ${buckets[i].map(k => `<span class="cmap-leaf">${escapeHtml(k)}</span>`).join("")}
+      </div>
+    </div>`).join("")
+    : `<div class="cmap-branch"><div class="cmap-leaves">
+         ${keywords.map(k => `<span class="cmap-leaf">${escapeHtml(k)}</span>`).join("")}
+       </div></div>`;
+
+  return `
+    <div class="cmap-center">${escapeHtml(center)}</div>
+    <div class="cmap-branches">${branches}</div>`;
 }
 
 /* ── My Documents (persisted study docs) ──────────────────────────── */

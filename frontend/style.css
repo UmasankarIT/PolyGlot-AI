@@ -1558,3 +1558,100 @@ html, body {
 .flash-done-sub { font-size: 13px; color: var(--text2); margin-top: 4px; }
 .flash-done-actions { display: flex; gap: 10px; justify-content: center; align-items: center; margin-top: 18px; flex-wrap: wrap; }
 .flash-done-actions .flash-btn { flex: 0 0 auto; min-width: 120px; }
+
+/* ════════════════════════════════════════════════════════════════
+   STUDY — Key Topics strip (top of output)
+   ════════════════════════════════════════════════════════════════ */
+.topics-strip {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 12px 14px; border-radius: var(--r);
+  background: linear-gradient(120deg, rgba(139,92,246,0.10), rgba(34,211,238,0.05)), var(--bg2);
+  border: 1px solid var(--border); box-shadow: var(--card-shadow);
+}
+.topics-strip-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;
+  color: var(--text3); margin-right: 2px;
+}
+.topic-chip {
+  font-size: 13px; font-weight: 600; color: #fff; cursor: pointer; font-family: inherit;
+  padding: 5px 14px; border-radius: 20px; border: none;
+  background: var(--accent-grad); box-shadow: 0 3px 12px rgba(139,92,246,0.3);
+  transition: transform 0.15s;
+}
+.topic-chip:hover { transform: translateY(-1px); }
+.topics-map-btn {
+  margin-left: auto; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
+  padding: 5px 13px; border-radius: 20px;
+  background: var(--bg3); border: 1px solid var(--border2); color: var(--text2);
+  transition: all 0.15s;
+}
+.topics-map-btn:hover { border-color: var(--purple); color: var(--purple); background: var(--purple-dim); }
+
+/* ════════════════════════════════════════════════════════════════
+   CONCEPT MIND-MAP MODAL
+   ════════════════════════════════════════════════════════════════ */
+.cmap-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: rgba(5,5,10,0.55);
+  backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
+  animation: fadeIn 0.2s ease;
+}
+.cmap-modal {
+  width: 100%; max-width: 860px; max-height: 88vh; overflow: auto;
+  background: linear-gradient(160deg, rgba(139,92,246,0.08), rgba(34,211,238,0.04)), var(--bg2);
+  border: 1px solid var(--border2); border-radius: 18px;
+  box-shadow: 0 40px 90px rgba(0,0,0,0.55);
+  animation: cmapPop 0.24s cubic-bezier(.22,1,.36,1);
+}
+@keyframes cmapPop { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+.cmap-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+}
+.cmap-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.cmap-close {
+  width: 32px; height: 32px; border-radius: 8px; cursor: pointer;
+  background: var(--bg3); border: 1px solid var(--border2); color: var(--text2);
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.cmap-close:hover { color: var(--red); border-color: var(--red); }
+.cmap-close svg { width: 16px; height: 16px; }
+
+.cmap-canvas {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 34px 24px 40px; gap: 26px;
+}
+.cmap-center {
+  position: relative;
+  font-size: 15px; font-weight: 700; color: #fff; text-align: center;
+  padding: 16px 26px; border-radius: 16px; max-width: 460px;
+  background: var(--accent-grad);
+  box-shadow: 0 10px 30px rgba(139,92,246,0.45);
+}
+.cmap-center::after {
+  content: ''; position: absolute; left: 50%; bottom: -26px; width: 2px; height: 26px;
+  background: linear-gradient(to bottom, var(--purple), transparent);
+}
+.cmap-branches {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 18px; width: 100%;
+}
+.cmap-branch {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 16px 16px 18px; border-radius: 14px;
+  background: var(--bg3); border: 1px solid var(--border2);
+  min-width: 180px; max-width: 240px; flex: 1 1 200px;
+}
+.cmap-topic {
+  font-size: 13.5px; font-weight: 700; color: var(--purple); text-align: center;
+  padding: 6px 14px; border-radius: 20px;
+  background: var(--purple-dim); border: 1px solid rgba(139,92,246,0.3);
+}
+.cmap-leaves { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.cmap-leaf {
+  font-size: 12px; color: var(--text); padding: 4px 11px; border-radius: 14px;
+  background: var(--bg4); border: 1px solid var(--border2);
+}
+@media (max-width: 620px) {
+  .cmap-branch { min-width: 140px; }
+}
