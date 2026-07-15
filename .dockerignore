@@ -1,0 +1,27 @@
+# Python virtual environments (compiled for Windows — must NOT go in the Linux image)
+speech_env/
+venv/
+.venv/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+
+# Git
+.git/
+.gitignore
+
+# Environment / secrets
+.env
+*.env
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
