@@ -12,7 +12,7 @@ let liveSecs          = 0;
 let chunkCounter      = 0;
 let waveInt           = null;
 let selectedFile      = null;
-let fileResults       = { transcript: "", translations: {}, summary: "" };
+let fileResults       = { transcript: "", translations: {}, summary: "", processedLang: "" };
 let options           = { transcript: true, translation: true, summary: false, sentiment: false };
 let liveTranscriptFull    = "";
 let liveTranslationFull   = "";
@@ -846,7 +846,7 @@ async function renderHistory() {
 function loadHistoryEntry(s) {
   if (s.source === "file") {
     switchTab("file");
-    fileResults = { transcript: s.transcript||"", translations:{}, summary:"" };
+    fileResults = { transcript: s.transcript||"", translations:{}, summary:"", processedLang:"" };
     if (s.lang && s.translation) fileResults.translations[s.lang] = s.translation;
     hideAllCards();
     document.getElementById("translations-container").innerHTML = "";
@@ -912,7 +912,7 @@ function setSelectedFile(f) {
   selectedFile = f;
   document.getElementById("dropMain").textContent = `✓ ${f.name}`;
   document.getElementById("dropZone").classList.add("has-file");
-  if (!allFileResults[f.name]) allFileResults[f.name] = { transcript:"", translations:{}, summary:"" };
+  if (!allFileResults[f.name]) allFileResults[f.name] = { transcript:"", translations:{}, summary:"", processedLang:"" };
   fileResults = allFileResults[f.name];
   hideAllCards();
   document.getElementById("translations-container").innerHTML = "";
@@ -936,6 +936,7 @@ function setSelectedFile(f) {
     if (el) el.textContent = text;
   });
   if (fileResults.summary) showCard("summary", fileResults.summary);
+  renderDownloadOptions();
 }
 
 function toggleOption(key) {
@@ -981,18 +982,26 @@ async function processFile() {
     }
 
     if (options.translation) {
-      if (fileResults.translations[lang]) {
-        toast(`${lang} already done ✓`, "success");
+      // Re-run translation whenever the selected language differs from the one
+      // already processed — even if a cached entry exists.
+      const alreadyDone = fileResults.translations[lang] && fileResults.processedLang === lang;
+      if (alreadyDone) {
+        toast(`${lang} translation already done ✓`, "success");
       } else {
         applyRTL(lang);
         pmsg.textContent = `🌐 Translating to ${lang}…`;
         const cardId = `card-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
         const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
         addTranslationCard(lang, cardId, bodyId);
-        const translated = await streamFileTranslation(transcript, lang, bodyId);
-        fileResults.translations[lang] = translated;
-        const el = document.getElementById(bodyId);
-        if (el) el.textContent = translated;
+        try {
+          const translated = await streamFileTranslation(transcript, lang, bodyId);
+          fileResults.translations[lang] = translated;
+          fileResults.processedLang = lang;
+          const el = document.getElementById(bodyId);
+          if (el) el.textContent = translated;
+        } catch (e) {
+          throw new Error(`Translation to ${lang} failed: ${e.message}`);
+        }
       }
     }
 
@@ -1043,6 +1052,7 @@ async function processFile() {
 
     document.getElementById("downloadGroup").style.display = "flex";
     document.getElementById("fileBadge").textContent = "Done";
+    renderDownloadOptions();
     toast("Done! ✓", "success");
     saveFileHistory(selectedFile.name, lang, fileResults.transcript, fileResults.translations[lang]||"");
 
@@ -1079,7 +1089,10 @@ async function streamFileTranslation(text, lang, bodyId) {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ text, target_language: lang })
       });
-      if (!res.ok) { resolve(""); return; }
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw new Error(errText ? errText.slice(0, 200) : `HTTP ${res.status}`);
+      }
       const reader  = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = ""; let full = "";
@@ -1124,8 +1137,9 @@ function hideAllCards() {
 
 function clearFileResults() {
   hideAllCards();
-  fileResults = { transcript:"", translations:{}, summary:"" };
+  fileResults = { transcript:"", translations:{}, summary:"", processedLang:"" };
   document.getElementById("translations-container").innerHTML = "";
+  renderDownloadOptions();
   document.getElementById("resultsEmpty").style.display = "flex";
   document.getElementById("downloadGroup").style.display = "none";
   document.getElementById("fileBadge").textContent = "Idle";
@@ -1145,12 +1159,15 @@ function downloadLiveTxt() {
 }
 
 function downloadTxt() {
+  const sel = getDownloadSelection();
   let out = "";
-  if (fileResults.transcript) out += `TRANSCRIPT:\n${fileResults.transcript}\n\n`;
-  Object.entries(fileResults.translations).forEach(([lang,text]) => {
+  if (sel.transcript && fileResults.transcript) out += `TRANSCRIPT:\n${fileResults.transcript}\n\n`;
+  sel.langs.forEach(lang => {
+    const text = fileResults.translations[lang];
     if (text) out += `TRANSLATION (${lang}):\n${text}\n\n`;
   });
-  if (fileResults.summary) out += `SUMMARY:\n${fileResults.summary}`;
+  if (sel.summary && fileResults.summary) out += `SUMMARY:\n${fileResults.summary}`;
+  if (!out.trim()) { toast("Nothing selected to download", "error"); return; }
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([out.trim()], { type:"text/plain" }));
   a.download = `polyglot_${Date.now()}.txt`;
@@ -1158,12 +1175,92 @@ function downloadTxt() {
   toast("Downloaded TXT", "success");
 }
 
-function downloadPDFFile() { downloadPDF(fileResults); }
-function downloadLivePDF() {
-  downloadPDF({ transcript: liveTranscriptFull, translations: { [sessionLang]: liveTranslationFull }, summary: "" });
+/* ── Download selection (pick which sections/languages to include) ── */
+function _dlgLangId(lang) { return "dlg-lang-" + lang.replace(/\s|\(|\)/g,"_"); }
+
+function renderDownloadOptions() {
+  const list = document.getElementById("downloadOptionsList");
+  if (!list) return;
+  let html = `<label class="dlg-opt"><input type="checkbox" id="dlg-transcript" checked> Transcript (original)</label>`;
+  Object.entries(fileResults.translations || {}).forEach(([lang, text]) => {
+    if (text) html += `<label class="dlg-opt"><input type="checkbox" id="${_dlgLangId(lang)}" checked> Translation — ${escapeHtml(lang)}</label>`;
+  });
+  if (fileResults.summary) html += `<label class="dlg-opt"><input type="checkbox" id="dlg-summary" checked> AI Summary</label>`;
+  list.innerHTML = html;
 }
 
-async function downloadPDF(results) {
+function getDownloadSelection() {
+  const checked = (id) => { const el = document.getElementById(id); return el ? el.checked : true; };
+  const langs = Object.keys(fileResults.translations || {}).filter(lang => checked(_dlgLangId(lang)));
+  return { transcript: checked("dlg-transcript"), summary: checked("dlg-summary"), langs };
+}
+
+function downloadPDFFile() { downloadPDF(fileResults, { filter: true }); }
+function downloadLivePDF() {
+  downloadPDF({ transcript: liveTranscriptFull, translations: { [sessionLang]: liveTranslationFull }, summary: "" }, {});
+}
+
+// jsPDF's built-in helvetica can only render ASCII/Latin-1 — Telugu, Hindi,
+// Tamil, Arabic, Chinese, etc. come out garbled. Detect non-ASCII content and
+// use a printable HTML report instead, which uses the OS fonts and renders
+// every script correctly.
+function _hasNonLatin(str) { return /[^\x00-\x7F]/.test(str || ""); }
+function _escHtml(s) {
+  return (s || "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+function downloadPDFPrint(results) {
+  let sections = "";
+  if (results.transcript) sections += `<section><h2>📝 Transcript</h2><p>${_escHtml(results.transcript)}</p></section>`;
+  Object.entries(results.translations || {}).forEach(([lang, text]) => {
+    if (text) sections += `<section><h2>🌐 Translation (${_escHtml(lang)})</h2><p>${_escHtml(text)}</p></section>`;
+  });
+  if (results.summary) sections += `<section><h2>🧠 AI Summary</h2><p>${_escHtml(results.summary)}</p></section>`;
+
+  const win = window.open("", "_blank", "width=820,height=900");
+  if (!win) { toast("Popup blocked — allow popups to save the PDF", "error"); return; }
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>PolyglotAI Report</title>
+<style>
+  body { font-family: 'Segoe UI', 'Noto Sans', 'Noto Sans Telugu', 'Noto Sans Devanagari', 'Noto Sans Tamil', sans-serif; margin: 40px; color: #1a1a2e; }
+  header { background: #7f77dd; color: #fff; padding: 14px 20px; border-radius: 8px; margin-bottom: 24px; }
+  header h1 { margin: 0; font-size: 20px; }
+  header div { font-size: 11px; opacity: .85; margin-top: 2px; }
+  section { margin-bottom: 22px; page-break-inside: avoid; }
+  h2 { font-size: 13px; color: #7f77dd; border-bottom: 2px solid #7f77dd; padding-bottom: 4px; }
+  p { font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+  footer { color: #999; font-size: 10px; text-align: center; margin-top: 30px; }
+</style></head><body>
+<header><h1>PolyglotAI — Speech Translation Report</h1><div>${_escHtml(new Date().toLocaleString())}</div></header>
+${sections}
+<footer>Generated by PolyglotAI · Powered by Groq + Whisper + Deepgram + LLM</footer>
+</body></html>`);
+  win.document.close();
+  setTimeout(() => { win.focus(); win.print(); }, 350);
+  toast("Choose 'Save as PDF' in the print dialog", "success");
+}
+
+async function downloadPDF(raw, opts) {
+  // Apply the user's download-selection (which languages/intro/summary to include).
+  let results = raw;
+  if (opts && opts.filter) {
+    const sel = getDownloadSelection();
+    results = {
+      transcript: sel.transcript ? raw.transcript : "",
+      translations: sel.langs.reduce((acc, lang) => {
+        if (raw.translations && raw.translations[lang]) acc[lang] = raw.translations[lang];
+        return acc;
+      }, {}),
+      summary: sel.summary ? raw.summary : "",
+    };
+  }
+  const hasContent = results.transcript || results.summary || Object.keys(results.translations || {}).some(k => results.translations[k]);
+  if (!hasContent) { toast("Nothing selected to download", "error"); return; }
+
+  // Non-Latin content (Telugu, Hindi, Tamil, …) can't render in jsPDF fonts —
+  // fall back to the print-view which renders all scripts natively.
+  const needsUnicode = [results.transcript, ...Object.values(results.translations || {}), results.summary]
+    .some(_hasNonLatin);
+  if (needsUnicode) { downloadPDFPrint(results); return; }
   if (!window.jsPDF) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");

@@ -28,6 +28,26 @@ DB_PATH = Path(__file__).parent / "polyglot.db"
 if IS_POSTGRES:
     import psycopg2
     import psycopg2.extras
+    import psycopg2.pool
+
+_POOL = None
+
+
+def _get_pool():
+    """Lazy pool — created on first use so import never hangs if DB sleeps."""
+    global _POOL
+    if _POOL is None:
+        _POOL = psycopg2.pool.ThreadedConnectionPool(
+            1, 10,
+            DATABASE_URL,
+            cursor_factory=psycopg2.extras.RealDictCursor,
+            connect_timeout=10,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5,
+        )
+    return _POOL
 
 
 def is_postgres() -> bool:
@@ -53,11 +73,12 @@ class _Cursor:
 class _Conn:
     """A connection that behaves like sqlite3's (has .execute) for both backends."""
     def __init__(self):
+        self._pooled = False
         if IS_POSTGRES:
+            # Reuse warm connection from pool — no TCP+TLS handshake per request.
             # RealDictCursor → rows behave like dicts: row["col"] and dict(row) both work.
-            self._conn = psycopg2.connect(
-                DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor
-            )
+            self._conn = _get_pool().getconn()
+            self._pooled = True
         else:
             self._conn = sqlite3.connect(str(DB_PATH))
             self._conn.row_factory = sqlite3.Row  # rows support row["col"] and dict(row)
@@ -81,7 +102,29 @@ class _Conn:
         self._conn.commit()
 
     def close(self):
-        self._conn.close()
+        if IS_POSTGRES and self._pooled:
+            try:
+                _get_pool().putconn(self._conn)
+            except Exception:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+        else:
+            self._conn.close()
+
+
+def ping_db() -> bool:
+    """Light keepalive query for cron pingers. Returns True if DB reachable."""
+    try:
+        conn = get_db()
+        try:
+            conn.execute("SELECT 1", ())
+            return True
+        finally:
+            conn.close()
+    except Exception:
+        return False
 
 
 def get_db() -> "_Conn":

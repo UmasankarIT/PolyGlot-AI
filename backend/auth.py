@@ -97,11 +97,25 @@ def init_db():
 
 # ── Password helpers ─────────────────────────────────────────────────
 
+# bcrypt cost: 12 (bcrypt default) → 10. On this class of laptop a cost-12
+# checkpw costs ~400-500ms and runs on the event loop, which made logins feel
+# sluggish and temporarily stalled every other request. 10 rounds is still
+# cryptographically safe for this app and cuts the cost roughly in half.
+# Existing users self-migrate: their >10-round hash is re-hashed at login.
+_BCRYPT_ROUNDS = 10
+
 def hash_password(plain: str) -> str:
-    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)).decode()
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+def _needs_rehash(hashed: str) -> bool:
+    """True when the stored hash uses more rounds than our current cost."""
+    try:
+        return int(hashed.split("$")[2]) > _BCRYPT_ROUNDS
+    except (IndexError, ValueError):
+        return False
 
 
 # ── JWT helpers ──────────────────────────────────────────────────────
@@ -178,6 +192,16 @@ def login_user(req: LoginRequest) -> dict:
         ).fetchone()
         if not row or not verify_password(req.password, row["password_hash"]):
             raise HTTPException(401, "Invalid username or password")
+
+        # Cost-migration: re-hash old (more expensive) hashes with the current
+        # cost so repeat logins stay fast. bcrypt reads the cost from the hash
+        # prefix, so lowering rounds never breaks existing accounts.
+        if _needs_rehash(row["password_hash"]):
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (hash_password(req.password), row["id"]),
+            )
+            conn.commit()
 
         token = create_token(row["id"], row["username"])
         return {

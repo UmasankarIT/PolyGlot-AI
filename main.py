@@ -70,7 +70,7 @@ app.include_router(study_router)
 app.include_router(analyze_router)
 
 ALLOWED_EXTS   = {"mp3", "wav", "m4a", "mp4", "webm", "ogg", "flac", "aac"}
-MAX_FILE_BYTES = 25 * 1024 * 1024
+MAX_FILE_BYTES = 100 * 1024 * 1024
 
 
 @app.on_event("startup")
@@ -83,10 +83,12 @@ async def startup_check():
 
 # ── Auth ──────────────────────────────────────────────────────────
 @app.post("/auth/register")
-async def register(req: RegisterRequest): return register_user(req)
+async def register(req: RegisterRequest):
+    return await asyncio.to_thread(register_user, req)
 
 @app.post("/auth/login")
-async def login(req: LoginRequest): return login_user(req)
+async def login(req: LoginRequest):
+    return await asyncio.to_thread(login_user, req)
 
 @app.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
@@ -145,6 +147,14 @@ def _validate_audio_upload(file: UploadFile, audio_bytes: bytes):
 @app.get("/health")
 async def health():
     return {"status": "ok", "message": "PolyglotAI API is running", "version": "5.3.0"}
+
+@app.get("/health/db")
+async def health_db():
+    # Light keepalive for free-tier Postgres. Ping this every 5 min
+    # (UptimeRobot/cron) to keep both web + DB warm.
+    from backend.db import ping_db
+    ok = await asyncio.to_thread(ping_db)
+    return {"db": "ok" if ok else "down"}
 
 @app.get("/languages")
 async def languages():

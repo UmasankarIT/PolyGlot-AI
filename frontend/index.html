@@ -654,7 +654,7 @@
             <input type="file" id="fileInput" accept="audio/*, .mp4" style="display:none" onchange="onFileSelect(event)" onclick="event.stopPropagation()"/>
             <div class="drop-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zm-2 7l-3-3h2v-4h2v4h2l-3 3z"/></svg></div>
             <div class="drop-main" id="dropMain">Drop audio file or click to browse</div>
-            <div class="drop-sub">MP3 · WAV · M4A · WebM · OGG — max 25MB</div>
+            <div class="drop-sub">MP3 · WAV · M4A · WebM · OGG — max 100MB</div>
           </div>
           <div class="divider"></div>
           <div class="field-group">
@@ -697,6 +697,10 @@
           <div class="download-group" id="downloadGroup" style="display:none">
             <button type="button" class="btn-secondary" onclick="downloadTxt()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zm-2 7l-3-3h2v-4h2v4h2l-3 3z"/></svg>TXT</button>
             <button type="button" class="btn-secondary" onclick="downloadPDFFile()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg>PDF</button>
+            <details class="download-options" id="downloadOptions">
+              <summary>Include in download…</summary>
+              <div id="downloadOptionsList"></div>
+            </details>
           </div>
         </div>
         <div class="output-area">
@@ -991,8 +995,8 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<script src="live_realtime.js?v=62"></script>
-<script src="script.js?v=62"></script>
+<script src="live_realtime.js?v=65"></script>
+<script src="script.js?v=65"></script>
 
 <script>
 /* ── Resizable Cards ────────────────────────────────────────── */
