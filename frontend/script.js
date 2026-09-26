@@ -11,8 +11,6 @@ let liveTimerInt      = null;
 let liveSecs          = 0;
 let chunkCounter      = 0;
 let waveInt           = null;
-let selectedFile      = null;
-let fileResults       = { transcript: "", translations: {}, summary: "", processedLang: "" };
 let options           = { transcript: true, translation: true, summary: false, sentiment: false };
 let liveTranscriptFull    = "";
 let liveTranslationFull   = "";
@@ -109,7 +107,8 @@ function applyRTL(lang) {
   const dir   = isRTL ? "rtl" : "ltr";
   const liveEl = document.getElementById("liveTranslationContent");
   if (liveEl) { liveEl.dir = dir; liveEl.style.textAlign = isRTL ? "right" : "left"; }
-  document.querySelectorAll('[id^="res-trans-"]').forEach(el => {
+  // Covers both the live card and the per-file cards ("<jobId>-res-trans-<Lang>").
+  document.querySelectorAll('[id$="-res-translation"], [id^="res-trans-"], [id*="-res-trans-"]').forEach(el => {
     el.dir = dir; el.style.textAlign = isRTL ? "right" : "left";
   });
 }
@@ -846,23 +845,19 @@ async function renderHistory() {
 function loadHistoryEntry(s) {
   if (s.source === "file") {
     switchTab("file");
-    fileResults = { transcript: s.transcript||"", translations:{}, summary:"", processedLang:"" };
-    if (s.lang && s.translation) fileResults.translations[s.lang] = s.translation;
-    hideAllCards();
-    document.getElementById("translations-container").innerHTML = "";
-    document.getElementById("dropMain").textContent = s.filename?`✓ ${s.filename}`:"Previous result";
-    document.getElementById("fileBadge").textContent = "Done";
-    document.getElementById("resultsEmpty").style.display = "none";
-    document.getElementById("downloadGroup").style.display = "flex";
-    if (fileResults.transcript) showCard("transcript", fileResults.transcript);
-    Object.entries(fileResults.translations).forEach(([lang, text]) => {
-      if (!text) return;
-      const cardId = `card-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
-      const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
-      addTranslationCard(lang, cardId, bodyId);
-      const el = document.getElementById(bodyId);
-      if (el) el.textContent = text;
-    });
+    // A history entry has no File object, so it comes back as a read-only
+    // "restored" job: results are shown, but it is never re-processed.
+    const job = _newFileJob(null);
+    job.name    = s.filename || "Previous result";
+    job.status  = "done";
+    job.restored = true;
+    job.results.transcript = s.transcript || "";
+    if (s.lang && s.translation) job.results.translations[s.lang] = s.translation;
+    fileJobs.push(job);
+    renderFileJobs();
+    _setJobMsg(job, "↺ Restored from history");
+    document.getElementById("dropZone").classList.add("has-file");
+    document.getElementById("dropMain").textContent = `✓ ${fileJobs.length} file${fileJobs.length === 1 ? "" : "s"} ready`;
   } else {
     switchTab("live");
     liveTranscriptFull    = s.transcript  || "";
@@ -890,259 +885,529 @@ async function clearHistory() {
    FILE UPLOAD & PROCESSING
    ════════════════════════════════════════════════════════════════ */
 
+/* ════════════════════════════════════════════════════════════════
+   FILE UPLOAD & PROCESSING — MULTI-FILE
+
+   Every selected file becomes a "job": its own queue row, its own
+   result card, its own transcript / translations / summary / sentiment.
+   Nothing is shared between jobs except the target language and the
+   "include in results" toggles, which apply to the whole batch.
+   ════════════════════════════════════════════════════════════════ */
+
+let fileJobs   = [];
+let _jobSeq    = 0;
+let _batchBusy = false;
+
+const AUDIO_EXTS = ["mp3", "wav", "m4a", "mp4", "webm", "ogg", "flac", "aac"];
+const AUDIO_MAX  = 100 * 1024 * 1024;
+
+const ICON_COPY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
+const ICON_TXT  = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zm-2 7l-3-3h2v-4h2v4h2l-3 3z"/></svg>';
+const ICON_PDF  = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg>';
+
+function _fmtBytes(n) {
+  if (!n && n !== 0) return "";
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(0) + " KB";
+  return (n / 1048576).toFixed(1) + " MB";
+}
+
+function _findFileJob(id) { return fileJobs.find(j => j.id === id) || null; }
+function _statusLabel(status) {
+  return status === "running" ? "Running"
+       : status === "done"    ? "Done"
+       : status === "error"   ? "Error" : "Queued";
+}
+
+/* ── Selection (picker + drag & drop) ───────────────────────────── */
 function onDropZoneClick(e) {
   if (e.target === document.getElementById("fileInput")) return;
-  const btn = document.getElementById("processBtn");
-  if (btn && btn.disabled) return;
   document.getElementById("fileInput").click();
 }
-function onFileSelect(e) { const f = e.target.files[0]; if (f) setSelectedFile(f); e.target.value = ""; }
+function onFileSelect(e) { addFilesToQueue(e.target.files); e.target.value = ""; }
 function onDragOver(e)  { e.preventDefault(); document.getElementById("dropZone").classList.add("drag-over"); }
 function onDragLeave()  { document.getElementById("dropZone").classList.remove("drag-over"); }
 function onDrop(e) {
   e.preventDefault();
   document.getElementById("dropZone").classList.remove("drag-over");
-  const f = e.dataTransfer.files[0];
-  if (f) setSelectedFile(f);
+  addFilesToQueue(e.dataTransfer.files);
 }
 
-const allFileResults = {};
-
-function setSelectedFile(f) {
-  selectedFile = f;
-  document.getElementById("dropMain").textContent = `✓ ${f.name}`;
-  document.getElementById("dropZone").classList.add("has-file");
-  if (!allFileResults[f.name]) allFileResults[f.name] = { transcript:"", translations:{}, summary:"", processedLang:"" };
-  fileResults = allFileResults[f.name];
-  hideAllCards();
-  document.getElementById("translations-container").innerHTML = "";
-  document.getElementById("fileBadge").textContent = "Idle";
-  document.getElementById("fileDetectedLang").textContent = "";
-  if (fileResults.transcript) {
-    showCard("transcript", fileResults.transcript);
-    document.getElementById("resultsEmpty").style.display = "none";
-    document.getElementById("downloadGroup").style.display = "flex";
-    document.getElementById("fileBadge").textContent = "Done";
-  } else {
-    document.getElementById("resultsEmpty").style.display = "flex";
-    document.getElementById("downloadGroup").style.display = "none";
-  }
-  Object.entries(fileResults.translations).forEach(([lang, text]) => {
-    if (!text) return;
-    const cardId = `card-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
-    const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
-    addTranslationCard(lang, cardId, bodyId);
-    const el = document.getElementById(bodyId);
-    if (el) el.textContent = text;
+function addFilesToQueue(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const rejected = [];
+  files.forEach(f => {
+    const ext = (f.name.split(".").pop() || "").toLowerCase();
+    if (!AUDIO_EXTS.includes(ext)) { rejected.push(`${f.name} (.${ext || "?"})`); return; }
+    if (f.size > AUDIO_MAX)       { rejected.push(`${f.name} — over 100MB`); return; }
+    fileJobs.push(_newFileJob(f));
   });
-  if (fileResults.summary) showCard("summary", fileResults.summary);
-  renderDownloadOptions();
+  renderFileJobs();
+  if (fileJobs.length) {
+    document.getElementById("dropZone").classList.add("has-file");
+    document.getElementById("dropMain").textContent =
+      `✓ ${fileJobs.length} file${fileJobs.length === 1 ? "" : "s"} ready`;
+  }
+  if (rejected.length) {
+    toast(`Skipped ${rejected.length}: ${rejected.slice(0, 2).join(", ")}${rejected.length > 2 ? "…" : ""}`, "error");
+  }
+}
+
+function _newFileJob(file) {
+  return {
+    id: "fjob" + (++_jobSeq),
+    file, name: file ? file.name : "", size: file ? file.size : 0,
+    status: "queued", error: "", collapsed: false, restored: false,
+    results: {
+      transcript: "", segments: [], translations: {}, summary: "",
+      processedLang: "", sentiment: null, detectedLang: "", langConfidence: null,
+      chapters: null, keywords: null, profiles: null, ragSessionId: "", ragLanguage: "English",
+    },
+    root: null,
+  };
+}
+
+/* ── Per-file result card shell ─────────────────────────────────── */
+function _buildFileJobCard(job) {
+  const el = document.createElement("div");
+  el.className = "file-job is-queued";
+  el.id = job.id;
+  el.innerHTML = `
+    <div class="file-job-head" onclick="toggleFileJob('${job.id}')">
+      <span class="fj-icon">🎵</span>
+      <div class="fj-meta">
+        <div class="fj-name" title="${escapeHtml(job.name)}">${escapeHtml(job.name)}</div>
+        <div class="fj-sub" id="${job.id}-sub">${_fmtBytes(job.size)}</div>
+      </div>
+      <span class="fj-status queued" id="${job.id}-status">Queued</span>
+      <div class="fj-actions">
+        <button type="button" class="fj-btn" title="Smart Analyze this file" onclick="event.stopPropagation();agentAnalyze('${job.id}')">🤖</button>
+        <button type="button" class="fj-btn" title="Remove this file" onclick="event.stopPropagation();removeFileJob('${job.id}')">✕</button>
+      </div>
+    </div>
+    <div class="file-job-body" id="${job.id}-body">
+      <div class="fj-msg" id="${job.id}-msg" style="display:none"></div>
+      <div class="fj-extras" id="${job.id}-extras"></div>
+      <div id="${job.id}-agent"></div>
+      <div id="${job.id}-rag"></div>
+      <div class="result-card" id="${job.id}-card-transcript" style="display:none">
+        <div class="result-card-head">
+          <span>Transcript</span>
+          <button type="button" class="icon-action" onclick="copyText('${job.id}-res-transcript')">${ICON_COPY}</button>
+        </div>
+        <div class="result-card-body" id="${job.id}-res-transcript"></div>
+      </div>
+      <div id="${job.id}-translations"></div>
+      <div class="result-card" id="${job.id}-card-summary" style="display:none">
+        <div class="result-card-head">
+          <span>AI Summary</span>
+          <button type="button" class="icon-action" onclick="copyText('${job.id}-res-summary')">${ICON_COPY}</button>
+        </div>
+        <div class="result-card-body" id="${job.id}-res-summary"></div>
+      </div>
+      <div class="result-card" id="${job.id}-card-sentiment" style="display:none">
+        <div class="result-card-head"><span>Sentiment Analysis</span></div>
+        <div class="result-card-body" id="${job.id}-res-sentiment"></div>
+      </div>
+      <div class="fj-downloads" id="${job.id}-downloads" style="display:none">
+        <button type="button" class="fj-dl-btn" onclick="downloadTxt('${job.id}')">${ICON_TXT} TXT</button>
+        <button type="button" class="fj-dl-btn" onclick="downloadPDFFile('${job.id}')">${ICON_PDF} PDF</button>
+        <details class="fj-dl-options">
+          <summary>Include in download…</summary>
+          <div class="fj-dl-list" id="${job.id}-dlg-list"></div>
+        </details>
+      </div>
+    </div>`;
+  job.root = el;
+  return el;
+}
+
+/* ── Queue + controls ───────────────────────────────────────────── */
+function renderFileJobs() {
+  const host  = document.getElementById("fileJobs");
+  const panel = document.getElementById("fileQueuePanel");
+  const list  = document.getElementById("fileQueueList");
+  const empty = document.getElementById("resultsEmpty");
+  if (!host || !list || !panel || !empty) return;
+
+  const n = fileJobs.length;
+  panel.style.display = n ? "block" : "none";
+  empty.style.display = n ? "none" : "flex";
+  host.style.display  = n ? "flex" : "none";
+  document.getElementById("fileQueueCount").textContent = `${n} file${n === 1 ? "" : "s"}`;
+
+  list.innerHTML = fileJobs.map(j => `
+    <div class="queue-row is-${j.status}" title="${escapeHtml(j.error || j.name)}">
+      <span class="qr-dot"></span>
+      <span class="qr-name">${escapeHtml(j.name)}</span>
+      <span class="qr-size">${_fmtBytes(j.size)}</span>
+      <button type="button" class="qr-remove" title="Remove" onclick="removeFileJob('${j.id}')">×</button>
+    </div>`).join("");
+
+  fileJobs.forEach(j => { if (!j.root) host.appendChild(_buildFileJobCard(j)); });
+  Array.from(host.children).forEach(node => {
+    if (!fileJobs.some(j => j.id === node.id)) node.remove();
+  });
+  fileJobs.forEach(renderFileJob);
+  _updateBatchControls();
+}
+
+/* Light repaint: status pill, card border, queue dots — safe to call mid-run
+   because it never rebuilds the streaming translation body. */
+function syncFileJob(job) {
+  if (job.root) job.root.className = "file-job is-" + job.status + (job.collapsed ? " collapsed" : "");
+  const st = document.getElementById(job.id + "-status");
+  if (st) { st.className = "fj-status " + job.status; st.textContent = _statusLabel(job.status); }
+  const list = document.getElementById("fileQueueList");
+  if (list) {
+    const row = Array.from(list.children).find(r => r.querySelector(".qr-name")?.textContent === job.name);
+    if (row) row.className = "queue-row is-" + job.status;
+  }
+  _updateBatchControls();
+}
+
+function _updateBatchControls() {
+  const btn   = document.getElementById("processBtn");
+  const label = document.getElementById("processBtnLabel");
+  const badge = document.getElementById("fileBadge");
+  const agent = document.getElementById("agentBtn");
+  const total = fileJobs.length;
+  const pending = fileJobs.filter(j => j.status === "queued" || j.status === "error").length;
+  const done    = fileJobs.filter(j => j.status === "done").length;
+
+  if (label) label.textContent = total > 1 ? `Process All (${pending} of ${total})` : "Process File";
+  if (btn) btn.disabled = _batchBusy || !total;
+  if (agent) agent.disabled = _batchBusy || !total;
+  if (badge) {
+    badge.textContent = !total ? "Idle"
+      : _batchBusy  ? `${done}/${total} done`
+      : pending === 0 ? "All done"
+      : `${done}/${total} done`;
+  }
+}
+
+function toggleFileJob(id) {
+  const job = _findFileJob(id);
+  if (!job) return;
+  job.collapsed = !job.collapsed;
+  job.root.className = "file-job is-" + job.status + (job.collapsed ? " collapsed" : "");
+}
+
+function removeFileJob(id) {
+  const i = fileJobs.findIndex(j => j.id === id);
+  if (i === -1) return;
+  if (fileJobs[i].status === "running") { toast("That file is still processing", "error"); return; }
+  const [gone] = fileJobs.splice(i, 1);
+  if (gone.root) gone.root.remove();
+  if (!fileJobs.length) {
+    document.getElementById("dropZone").classList.remove("has-file");
+    document.getElementById("dropMain").textContent = "Drop audio files or click to browse";
+  }
+  renderFileJobs();
+}
+
+function clearFileJobs() {
+  if (_batchBusy) { toast("Wait for the current batch to finish", "error"); return; }
+  fileJobs.forEach(j => j.root && j.root.remove());
+  fileJobs = [];
+  document.getElementById("dropZone").classList.remove("has-file");
+  document.getElementById("dropMain").textContent = "Drop audio files or click to browse";
+  renderFileJobs();
+}
+
+function toggleAllFileJobs() {
+  const collapse = fileJobs.some(j => !j.collapsed);
+  fileJobs.forEach(j => {
+    j.collapsed = collapse;
+    if (j.root) j.root.className = "file-job is-" + j.status + (collapse ? " collapsed" : "");
+  });
+}
+
+/* ── Per-file result rendering ──────────────────────────────────── */
+function renderFileJob(job) {
+  if (!job.root) return;
+  const r = job.results;
+  job.root.className = "file-job is-" + job.status + (job.collapsed ? " collapsed" : "");
+
+  const bits = [_fmtBytes(job.size)];
+  if (r.detectedLang) {
+    bits.push("detected " + r.detectedLang.toUpperCase() +
+      (r.langConfidence != null ? ` ${r.langConfidence}%` : ""));
+  }
+  if (r.transcript) {
+    bits.push(r.transcript.trim().split(/\s+/).filter(Boolean).length.toLocaleString() + " words");
+  }
+  const sub = document.getElementById(job.id + "-sub");
+  if (sub) sub.textContent = bits.join(" · ");
+
+  const st = document.getElementById(job.id + "-status");
+  if (st) { st.className = "fj-status " + job.status; st.textContent = _statusLabel(job.status); }
+
+  // transcript
+  const tCard = document.getElementById(job.id + "-card-transcript");
+  if (tCard) tCard.style.display = (options.transcript && r.transcript) ? "block" : "none";
+  const tBody = document.getElementById(job.id + "-res-transcript");
+  if (tBody && options.transcript && tBody.textContent !== r.transcript) tBody.textContent = r.transcript;
+
+  // translations — cards are reused (never wiped) so an in-flight token
+  // stream keeps writing into the same element
+  const tHost = document.getElementById(job.id + "-translations");
+  if (tHost) {
+    const keep = new Set();
+    Object.entries(r.translations).forEach(([lang, text]) => {
+      if (!text) return;
+      const key = lang.replace(/\s|\(|\)/g, "_");
+      keep.add(job.id + "-card-trans-" + key);
+      const body = _ensureTranslationCard(job, lang);
+      if (body && body.textContent !== text) body.textContent = text;
+    });
+    Array.from(tHost.children).forEach(c => { if (!keep.has(c.id)) c.remove(); });
+  }
+
+  // summary
+  const sCard = document.getElementById(job.id + "-card-summary");
+  if (sCard) sCard.style.display = (options.summary && r.summary) ? "block" : "none";
+  const sBody = document.getElementById(job.id + "-res-summary");
+  if (sBody && options.summary && r.summary && sBody.textContent !== r.summary) sBody.textContent = r.summary;
+
+  // sentiment
+  const seCard = document.getElementById(job.id + "-card-sentiment");
+  if (seCard) seCard.style.display = (options.sentiment && r.sentiment) ? "block" : "none";
+  const seBody = document.getElementById(job.id + "-res-sentiment");
+  if (seBody && r.sentiment) {
+    const html = _sentimentHtml(r.sentiment);
+    if (seBody.dataset.rendered !== job.status + html.length) {
+      seBody.innerHTML = html;
+      seBody.dataset.rendered = job.status + html.length;
+    }
+  }
+
+  // chapters / keywords / speaker profiles
+  const ex = document.getElementById(job.id + "-extras");
+  if (ex) {
+    ex.innerHTML = "";
+    if (r.chapters) ex.appendChild(_buildChaptersCard(r.chapters));
+    if (r.keywords)  ex.appendChild(_buildKeywordsCard(r.keywords));
+    if (r.profiles)  ex.appendChild(_buildSpeakerCard(r.profiles));
+  }
+
+  // downloads
+  const dl = document.getElementById(job.id + "-downloads");
+  if (dl) dl.style.display = r.transcript ? "flex" : "none";
+  renderDownloadOptions(job);
+}
+
+function _setJobMsg(job, text, isErr) {
+  const el = document.getElementById(job.id + "-msg");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "fj-msg" + (isErr ? " err" : "");
+  el.style.display = text ? "flex" : "none";
+}
+
+function showJobCard(job, type, text) {
+  const card = document.getElementById(job.id + "-card-" + type);
+  const body = document.getElementById(job.id + "-res-" + type);
+  if (card) card.style.display = text ? "block" : "none";
+  if (body && text) body.textContent = text;
+}
+
+/* Creates the translation card for a job+language if missing and returns its
+   body element. Returns an existing element untouched so streaming is safe. */
+function _ensureTranslationCard(job, lang) {
+  const host = document.getElementById(job.id + "-translations");
+  if (!host) return null;
+  const key    = lang.replace(/\s|\(|\)/g, "_");
+  const bodyId = job.id + "-res-trans-" + key;
+  const existing = document.getElementById(bodyId);
+  if (existing) return existing;
+
+  const card = document.createElement("div");
+  card.className = "result-card";
+  card.id = job.id + "-card-trans-" + key;
+  card.innerHTML = `
+    <div class="result-card-head">
+      <span>Translation — ${escapeHtml(lang)}</span>
+      <button type="button" class="icon-action" onclick="copyText('${bodyId}')">${ICON_COPY}</button>
+    </div>
+    <div class="result-card-body" id="${bodyId}"></div>`;
+  host.appendChild(card);
+  return document.getElementById(bodyId);
+}
+
+function _sentimentHtml(s) {
+  const emoji = EMOTION_EMOJI[s.emotion] || "😐";
+  const color = SENTIMENT_COLOR[s.sentiment] || "var(--text)";
+  return `
+    <div style="display:flex;align-items:center;gap:14px">
+      <span style="font-size:32px">${emoji}</span>
+      <div style="flex:1">
+        <div style="font-weight:600;color:${color};text-transform:capitalize">${escapeHtml(s.sentiment)} · ${escapeHtml(s.emotion)}</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:3px">${escapeHtml(s.summary)}</div>
+        ${s.key_phrases?.length ? `<div style="margin-top:8px">${s.key_phrases.map(p => `<span class="phrase-tag">${escapeHtml(p)}</span>`).join("")}</div>` : ""}
+      </div>
+      <span style="font-size:22px;font-weight:700;color:${color}">${Math.round(s.score * 100)}%</span>
+    </div>`;
 }
 
 function toggleOption(key) {
   options[key] = !options[key];
   const btn = document.getElementById("tog-" + key);
   if (btn) btn.classList.toggle("on", options[key]);
+  // re-render every card so toggling a section shows/hides it everywhere
+  fileJobs.forEach(j => { if (j.status === "done") renderFileJob(j); });
 }
 
-async function processFile() {
-  if (!selectedFile) { toast("Please upload a file first", "error"); return; }
-
-  const btn  = document.getElementById("processBtn");
-  const prog = document.getElementById("fileProgress");
-  const pmsg = document.getElementById("fileProgressMsg");
-  btn.disabled = true;
-  prog.style.display = "block";
-  pmsg.style.display = "block";
-  document.getElementById("resultsEmpty").style.display = "none";
-  document.getElementById("fileBadge").textContent = "Processing…";
+/* ── Batch processing ───────────────────────────────────────────── */
+async function processAllFiles() {
+  if (_batchBusy) return;
+  if (!fileJobs.length) { toast("Please add one or more files first", "error"); return; }
+  const queue = fileJobs.filter(j => j.file && (j.status === "queued" || j.status === "error"));
+  if (!queue.length) { toast(fileJobs.length ? "Every file has been processed ✓" : "Please add one or more files first", fileJobs.length ? "success" : "error"); return; }
 
   const lang = document.getElementById("fileLang").value;
+  const prog = document.getElementById("fileProgress");
+  const pmsg = document.getElementById("fileProgressMsg");
+
+  _batchBusy = true;
+  prog.style.display = "block";
+  pmsg.style.display = "block";
+  _updateBatchControls();
+
+  let ok = 0, failed = 0;
+  for (let i = 0; i < queue.length; i++) {
+    pmsg.textContent = `Processing ${i + 1} of ${queue.length} — ${queue[i].name}`;
+    const good = await processOneFileJob(queue[i], lang);
+    if (good) ok++; else failed++;
+  }
+
+  prog.style.display = "none";
+  pmsg.style.display = "none";
+  _batchBusy = false;
+  renderFileJobs();
+
+  if (failed === 0)  toast(`All ${ok} file${ok === 1 ? "" : "s"} processed ✓`, "success");
+  else if (ok === 0) toast(`All ${failed} file${failed === 1 ? "" : "s"} failed`, "error");
+  else               toast(`${ok} processed, ${failed} failed`, "error");
+}
+
+async function processOneFileJob(job, lang) {
+  const r = job.results;
+  job.status = "running";
+  job.error  = "";
+  job.collapsed = false;
+  _setJobMsg(job, "🎙️ Transcribing with Whisper…");
+  syncFileJob(job);
 
   try {
-    if (!fileResults.transcript) {
-      pmsg.textContent = "🎙️ Transcribing with Whisper…";
+    if (!r.transcript) {
       const fd = new FormData();
-      fd.append("file", selectedFile);
-      const tr = await fetch(`${API}/transcribe`, { method:"POST", body:fd });
+      fd.append("file", job.file);
+      const tr = await fetch(`${API}/transcribe`, { method: "POST", body: fd });
       if (!tr.ok) throw new Error("Transcription failed");
-      const trData = await tr.json();
-      fileResults.transcript = trData.transcript;
-      fileResults.segments = trData.segments || [];
-      if (trData.detected_language)
-        showLanguageConfidence(trData.detected_language, trData.language_confidence || null);
+      const data = await tr.json();
+      r.transcript     = data.transcript || "";
+      r.segments       = data.segments || [];
+      r.detectedLang   = data.detected_language || "";
+      r.langConfidence = data.language_confidence ?? null;
     }
 
-    const transcript = fileResults.transcript;
-    if (options.transcript) showCard("transcript", transcript);
+    if (options.transcript) showJobCard(job, "transcript", r.transcript);
 
-    // Auto-chapters if segments available
-    if (fileResults.segments && fileResults.segments.length > 4) {
-      generateChapters(fileResults.segments, transcript).catch(()=>{});
+    if (r.segments && r.segments.length > 4) {
+      generateChapters(job, r.segments, r.transcript).catch(() => {});
     }
 
     if (options.translation) {
-      // Re-run translation whenever the selected language differs from the one
-      // already processed — even if a cached entry exists.
-      const alreadyDone = fileResults.translations[lang] && fileResults.processedLang === lang;
-      if (alreadyDone) {
-        toast(`${lang} translation already done ✓`, "success");
+      // Re-translate whenever the chosen language differs from the one already
+      // stored for this file, even if a cached entry exists.
+      if (r.translations[lang] && r.processedLang === lang) {
+        _setJobMsg(job, `🌐 ${lang} translation already available`);
       } else {
         applyRTL(lang);
-        pmsg.textContent = `🌐 Translating to ${lang}…`;
-        const cardId = `card-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
-        const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g,"_")}`;
-        addTranslationCard(lang, cardId, bodyId);
-        try {
-          const translated = await streamFileTranslation(transcript, lang, bodyId);
-          fileResults.translations[lang] = translated;
-          fileResults.processedLang = lang;
-          const el = document.getElementById(bodyId);
-          if (el) el.textContent = translated;
-        } catch (e) {
-          throw new Error(`Translation to ${lang} failed: ${e.message}`);
-        }
+        _setJobMsg(job, `🌐 Translating to ${lang}…`);
+        const body = _ensureTranslationCard(job, lang);
+        const translated = await streamFileTranslation(r.transcript, lang, body);
+        r.translations[lang] = translated;
+        r.processedLang = lang;
+        if (body) body.textContent = translated;
       }
     }
 
     if (options.summary) {
-      if (!fileResults.summary) {
-        pmsg.textContent = "🧠 Summarizing with LLaMA…";
+      if (!r.summary) {
+        _setJobMsg(job, "🧠 Summarizing with LLaMA…");
         const sr = await fetch(`${API}/summarize`, {
-          method:"POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ text: transcript })
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: r.transcript })
         });
         if (!sr.ok) throw new Error("Summarization failed");
-        const { summary } = await sr.json();
-        fileResults.summary = summary;
+        r.summary = (await sr.json()).summary;
       }
-      showCard("summary", fileResults.summary);
+      showJobCard(job, "summary", r.summary);
     }
 
-    // Sentiment toggle support
-    if (options.sentiment && transcript) {
-      pmsg.textContent = "😊 Analyzing sentiment…";
+    if (options.sentiment && r.transcript) {
+      _setJobMsg(job, "😊 Analyzing sentiment…");
       try {
         const sr = await fetch(`${API}/sentiment`, {
-          method:"POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ text: transcript })
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: r.transcript })
         });
-        if (sr.ok) {
-          const sData = await sr.json();
-          const card = document.getElementById("card-sentiment-file");
-          const body = document.getElementById("res-sentiment-file");
-          if (card && body) {
-            const emoji = EMOTION_EMOJI[sData.emotion] || "😐";
-            const color = SENTIMENT_COLOR[sData.sentiment] || "var(--text)";
-            body.innerHTML = `
-              <div style="display:flex;align-items:center;gap:14px">
-                <span style="font-size:32px">${emoji}</span>
-                <div style="flex:1">
-                  <div style="font-weight:600;color:${color};text-transform:capitalize">${sData.sentiment} · ${sData.emotion}</div>
-                  <div style="font-size:12px;color:var(--text2);margin-top:3px">${escapeHtml(sData.summary)}</div>
-                  ${sData.key_phrases?.length ? `<div style="margin-top:8px">${sData.key_phrases.map(p=>`<span class="phrase-tag">${escapeHtml(p)}</span>`).join("")}</div>` : ""}
-                </div>
-                <span style="font-size:22px;font-weight:700;color:${color}">${Math.round(sData.score*100)}%</span>
-              </div>`;
-            card.style.display = "block";
-          }
-        }
+        if (sr.ok) r.sentiment = await sr.json();
       } catch {}
     }
 
-    document.getElementById("downloadGroup").style.display = "flex";
-    document.getElementById("fileBadge").textContent = "Done";
-    renderDownloadOptions();
-    toast("Done! ✓", "success");
-    saveFileHistory(selectedFile.name, lang, fileResults.transcript, fileResults.translations[lang]||"");
+    job.status = "done";
+    _setJobMsg(job, "✓ Complete");
+    renderFileJob(job);
+    syncFileJob(job);
+    saveFileHistory(job.name, lang, r.transcript, r.translations[lang] || "");
+    return true;
 
   } catch (err) {
-    document.getElementById("resultsEmpty").textContent = "Error: " + err.message;
-    document.getElementById("resultsEmpty").style.display = "flex";
-    document.getElementById("fileBadge").textContent = "Error";
-    toast(err.message, "error");
-  } finally {
-    prog.style.display = "none";
-    pmsg.style.display = "none";
-    btn.disabled = false;
+    job.status = "error";
+    job.error  = err.message || String(err);
+    _setJobMsg(job, "⚠️ " + job.error, true);
+    renderFileJob(job);
+    syncFileJob(job);
+    return false;
   }
 }
 
-function addTranslationCard(lang, cardId, bodyId) {
-  if (document.getElementById(cardId)) return;
-  const container = document.getElementById("translations-container");
-  const card = document.createElement("div");
-  card.className = "result-card"; card.id = cardId;
-  card.innerHTML = `
-    <div class="result-card-head">
-      <span>Translation — ${escapeHtml(lang)}</span>
-      <button class="icon-action" onclick="copyText('${bodyId}')"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg></button>
-    </div>
-    <div class="result-card-body" id="${bodyId}"></div>`;
-  container.appendChild(card);
-}
-
-async function streamFileTranslation(text, lang, bodyId) {
-  return new Promise(async (resolve) => {
-    try {
-      const res = await fetch(`${API}/translate/stream`, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ text, target_language: lang })
-      });
-      if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        throw new Error(errText ? errText.slice(0, 200) : `HTTP ${res.status}`);
+async function streamFileTranslation(text, lang, bodyEl) {
+  try {
+    const res = await fetch(`${API}/translate/stream`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, target_language: lang })
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(errText ? errText.slice(0, 200) : `HTTP ${res.status}`);
+    }
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "", full = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n"); buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const raw = line.slice(6).trim();
+        if (raw === "[DONE]") return full;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.token) { full += parsed.token; if (bodyEl) bodyEl.textContent = full; }
+        } catch {}
       }
-      const reader  = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = ""; let full = "";
-      const el = document.getElementById(bodyId);
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n"); buffer = lines.pop();
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const raw = line.slice(6).trim();
-          if (raw === "[DONE]") { resolve(full); return; }
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed.token) { full += parsed.token; if (el) el.textContent = full; }
-          } catch {}
-        }
-      }
-      resolve(full);
-    } catch { resolve(""); }
-  });
-}
-
-function showCard(type, text) {
-  const card = document.getElementById("card-" + type);
-  const body = document.getElementById("res-" + type);
-  if (card) card.style.display = "block";
-  if (body) body.textContent = text;
-}
-
-function hideAllCards() {
-  ["transcript","summary"].forEach(t => {
-    const card = document.getElementById("card-" + t);
-    const body = document.getElementById("res-" + t);
-    if (card) card.style.display = "none";
-    if (body) body.textContent = "";
-  });
-  const sentCard = document.getElementById("card-sentiment-file");
-  if (sentCard) sentCard.style.display = "none";
-}
-
-function clearFileResults() {
-  hideAllCards();
-  fileResults = { transcript:"", translations:{}, summary:"", processedLang:"" };
-  document.getElementById("translations-container").innerHTML = "";
-  renderDownloadOptions();
-  document.getElementById("resultsEmpty").style.display = "flex";
-  document.getElementById("downloadGroup").style.display = "none";
-  document.getElementById("fileBadge").textContent = "Idle";
+    }
+    return full;
+  } catch (e) {
+    throw new Error(`Translation to ${lang} failed: ${e.message}`);
+  }
 }
 
 /* ── Downloads ─────────────────────────────────────────────────── */
@@ -1158,44 +1423,53 @@ function downloadLiveTxt() {
   toast("Downloaded TXT", "success");
 }
 
-function downloadTxt() {
-  const sel = getDownloadSelection();
+function downloadTxt(jobId) {
+  const job = _findFileJob(jobId);
+  if (!job) return;
+  const r = job.results;
+  const sel = getDownloadSelection(job);
+  const base = job.name.replace(/\.[^.]+$/, "");
   let out = "";
-  if (sel.transcript && fileResults.transcript) out += `TRANSCRIPT:\n${fileResults.transcript}\n\n`;
+  if (sel.transcript && r.transcript) out += `FILE: ${job.name}\n\nTRANSCRIPT:\n${r.transcript}\n\n`;
   sel.langs.forEach(lang => {
-    const text = fileResults.translations[lang];
+    const text = r.translations[lang];
     if (text) out += `TRANSLATION (${lang}):\n${text}\n\n`;
   });
-  if (sel.summary && fileResults.summary) out += `SUMMARY:\n${fileResults.summary}`;
+  if (sel.summary && r.summary) out += `SUMMARY:\n${r.summary}`;
   if (!out.trim()) { toast("Nothing selected to download", "error"); return; }
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([out.trim()], { type:"text/plain" }));
-  a.download = `polyglot_${Date.now()}.txt`;
+  a.download = `polyglot_${base}_${Date.now()}.txt`;
   a.click();
-  toast("Downloaded TXT", "success");
+  toast(`Downloaded ${job.name}`, "success");
 }
 
-/* ── Download selection (pick which sections/languages to include) ── */
-function _dlgLangId(lang) { return "dlg-lang-" + lang.replace(/\s|\(|\)/g,"_"); }
+/* ── Download selection (per file) ───────────────────────────────── */
+function _dlgLangId(job, lang) { return job.id + "-dlg-lang-" + lang.replace(/\s|\(|\)/g, "_"); }
 
-function renderDownloadOptions() {
-  const list = document.getElementById("downloadOptionsList");
+function renderDownloadOptions(job) {
+  const list = document.getElementById(job.id + "-dlg-list");
   if (!list) return;
-  let html = `<label class="dlg-opt"><input type="checkbox" id="dlg-transcript" checked> Transcript (original)</label>`;
-  Object.entries(fileResults.translations || {}).forEach(([lang, text]) => {
-    if (text) html += `<label class="dlg-opt"><input type="checkbox" id="${_dlgLangId(lang)}" checked> Translation — ${escapeHtml(lang)}</label>`;
+  const r = job.results;
+  let html = `<label class="dlg-opt"><input type="checkbox" id="${job.id}-dlg-transcript" checked> Transcript (original)</label>`;
+  Object.entries(r.translations || {}).forEach(([lang, text]) => {
+    if (text) html += `<label class="dlg-opt"><input type="checkbox" id="${_dlgLangId(job, lang)}" checked> Translation — ${escapeHtml(lang)}</label>`;
   });
-  if (fileResults.summary) html += `<label class="dlg-opt"><input type="checkbox" id="dlg-summary" checked> AI Summary</label>`;
+  if (r.summary) html += `<label class="dlg-opt"><input type="checkbox" id="${job.id}-dlg-summary" checked> AI Summary</label>`;
   list.innerHTML = html;
 }
 
-function getDownloadSelection() {
+function getDownloadSelection(job) {
   const checked = (id) => { const el = document.getElementById(id); return el ? el.checked : true; };
-  const langs = Object.keys(fileResults.translations || {}).filter(lang => checked(_dlgLangId(lang)));
-  return { transcript: checked("dlg-transcript"), summary: checked("dlg-summary"), langs };
+  const langs = Object.keys(job.results.translations || {}).filter(lang => checked(_dlgLangId(job, lang)));
+  return { transcript: checked(job.id + "-dlg-transcript"), summary: checked(job.id + "-dlg-summary"), langs };
 }
 
-function downloadPDFFile() { downloadPDF(fileResults, { filter: true }); }
+function downloadPDFFile(jobId) {
+  const job = _findFileJob(jobId);
+  if (!job) return;
+  downloadPDF(job.results, { filter: true, job, title: job.name });
+}
 function downloadLivePDF() {
   downloadPDF({ transcript: liveTranscriptFull, translations: { [sessionLang]: liveTranslationFull }, summary: "" }, {});
 }
@@ -1209,7 +1483,7 @@ function _escHtml(s) {
   return (s || "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 }
 
-function downloadPDFPrint(results) {
+function downloadPDFPrint(results, title) {
   let sections = "";
   if (results.transcript) sections += `<section><h2>📝 Transcript</h2><p>${_escHtml(results.transcript)}</p></section>`;
   Object.entries(results.translations || {}).forEach(([lang, text]) => {
@@ -1217,6 +1491,7 @@ function downloadPDFPrint(results) {
   });
   if (results.summary) sections += `<section><h2>🧠 AI Summary</h2><p>${_escHtml(results.summary)}</p></section>`;
 
+  const heading = title ? `PolyglotAI — ${_escHtml(title)}` : "PolyglotAI — Speech Translation Report";
   const win = window.open("", "_blank", "width=820,height=900");
   if (!win) { toast("Popup blocked — allow popups to save the PDF", "error"); return; }
   win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>PolyglotAI Report</title>
@@ -1230,7 +1505,7 @@ function downloadPDFPrint(results) {
   p { font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
   footer { color: #999; font-size: 10px; text-align: center; margin-top: 30px; }
 </style></head><body>
-<header><h1>PolyglotAI — Speech Translation Report</h1><div>${_escHtml(new Date().toLocaleString())}</div></header>
+<header><h1>${heading}</h1><div>${_escHtml(new Date().toLocaleString())}</div></header>
 ${sections}
 <footer>Generated by PolyglotAI · Powered by Groq + Whisper + Deepgram + LLM</footer>
 </body></html>`);
@@ -1242,8 +1517,8 @@ ${sections}
 async function downloadPDF(raw, opts) {
   // Apply the user's download-selection (which languages/intro/summary to include).
   let results = raw;
-  if (opts && opts.filter) {
-    const sel = getDownloadSelection();
+  if (opts && opts.filter && opts.job) {
+    const sel = getDownloadSelection(opts.job);
     results = {
       transcript: sel.transcript ? raw.transcript : "",
       translations: sel.langs.reduce((acc, lang) => {
@@ -1253,6 +1528,7 @@ async function downloadPDF(raw, opts) {
       summary: sel.summary ? raw.summary : "",
     };
   }
+  const title = (opts && opts.title) || "";
   const hasContent = results.transcript || results.summary || Object.keys(results.translations || {}).some(k => results.translations[k]);
   if (!hasContent) { toast("Nothing selected to download", "error"); return; }
 
@@ -1260,7 +1536,7 @@ async function downloadPDF(raw, opts) {
   // fall back to the print-view which renders all scripts natively.
   const needsUnicode = [results.transcript, ...Object.values(results.translations || {}), results.summary]
     .some(_hasNonLatin);
-  if (needsUnicode) { downloadPDFPrint(results); return; }
+  if (needsUnicode) { downloadPDFPrint(results, title); return; }
   if (!window.jsPDF) {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -1275,14 +1551,14 @@ async function downloadPDF(raw, opts) {
   let y = margin;
   doc.setFillColor(127,119,221); doc.rect(0,0,pageW,14,"F");
   doc.setTextColor(255,255,255); doc.setFontSize(11); doc.setFont("helvetica","bold");
-  doc.text("PolyglotAI — Speech Translation Report", margin, 9);
+  doc.text(title ? `PolyglotAI — ${title}` : "PolyglotAI — Speech Translation Report", margin, 9);
   doc.setTextColor(200,200,255); doc.setFontSize(8); doc.setFont("helvetica","normal");
   doc.text(new Date().toLocaleString(), pageW-margin, 9, { align:"right" });
   y = 24; doc.setTextColor(30,30,30);
-  function addSection(title, body, color) {
+  function addSection(title2, body, color) {
     if (!body) return;
     doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...color);
-    doc.text(title, margin, y); y += 5;
+    doc.text(title2, margin, y); y += 5;
     doc.setDrawColor(...color); doc.setLineWidth(0.3); doc.line(margin, y, pageW-margin, y); y += 4;
     doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(50,50,50);
     const lines = doc.splitTextToSize(body, maxW);
@@ -1294,7 +1570,8 @@ async function downloadPDF(raw, opts) {
   addSection("AI Summary", results.summary, [239,159,39]);
   doc.setFontSize(7); doc.setTextColor(150,150,150);
   doc.text("Generated by PolyglotAI · Powered by Groq + Whisper + LLaMA", margin, 287);
-  doc.save(`polyglot_${Date.now()}.pdf`);
+  const safeName = (title || "report").replace(/\.[^.]+$/, "").replace(/[^\w\-. ]+/g, "_");
+  doc.save(`polyglot_${safeName}_${Date.now()}.pdf`);
   toast("PDF downloaded!", "success");
 }
 
@@ -1327,81 +1604,75 @@ function blobToBase64(blob) {
    Analyzes audio, suggests tools, user confirms, runs in parallel
    ════════════════════════════════════════════════════════════════ */
 
-let agentTranscript   = "";
-let agentDetectedLang = "";
+async function agentAnalyze(jobId) {
+  let job = jobId ? _findFileJob(jobId) : null;
+  if (!job) {
+    if (fileJobs.length === 1) job = fileJobs[0];
+    else {
+      toast(fileJobs.length ? "Use the 🤖 button on a specific file" : "Please add a file first", "error");
+      return;
+    }
+  }
+  if (job.status === "running") { toast("That file is still processing", "error"); return; }
+  if (!job.file) { toast("This is a restored history entry — re-add the file to analyze it", "error"); return; }
 
-async function agentAnalyze() {
-  if (!selectedFile) { toast("Please upload a file first", "error"); return; }
-
-  const btn  = document.getElementById("agentBtn");
-  const prog = document.getElementById("fileProgress");
-  const pmsg = document.getElementById("fileProgressMsg");
-
-  btn.disabled = true;
-  prog.style.display = "block";
-  pmsg.style.display = "block";
-  pmsg.textContent = "🤖 Agent is analyzing your audio…";
-  document.getElementById("fileBadge").textContent = "Analyzing…";
-  document.getElementById("resultsEmpty").style.display = "none";
-
-  // Remove old panel if any
-  const oldPanel = document.getElementById("agentPanel");
-  if (oldPanel) oldPanel.remove();
+  const host = document.getElementById(job.id + "-agent");
+  if (host) host.innerHTML = "";
+  job.status = "running";
+  job.error = "";
+  job.collapsed = false;
+  _setJobMsg(job, "🤖 Agent is analyzing your audio…");
+  syncFileJob(job);
 
   try {
     const lang = document.getElementById("fileLang").value;
-    const fd   = new FormData();
-    fd.append("file", selectedFile);
+    const fd = new FormData();
+    fd.append("file", job.file);
     fd.append("target_language", lang);
 
-    const res  = await fetch(`${API}/agent/analyze`, { method: "POST", body: fd });
+    const res = await fetch(`${API}/agent/analyze`, { method: "POST", body: fd });
     if (!res.ok) throw new Error("Agent analysis failed");
     const data = await res.json();
+    const r = job.results;
 
-    agentTranscript   = data.transcript;
-    agentDetectedLang = data.detected_lang;
+    r.transcript   = data.transcript;
+    r.detectedLang = data.detected_lang;
+    r.keywords     = data.keywords || null;
 
-    // Show transcript immediately
-    fileResults.transcript = data.transcript;
-    showCard("transcript", data.transcript);
-    showKeywords(data.keywords);
-    await ragStore(data.transcript, data.session_id, document.getElementById("fileLang").value);
-    setTimeout(() => document.getElementById("ragChatCard")?.scrollIntoView({behavior:"smooth"}), 500);
-    if (data.detected_lang)
-      showLanguageConfidence(data.detected_lang, null);
+    showJobCard(job, "transcript", r.transcript);
+    renderFileJob(job);
+    ragStore(job, data.transcript, data.session_id, lang).catch(() => {});
 
-    // Show suggestion panel
-    _showAgentPanel(data.suggestions, lang, data.duration_secs, data.word_count);
-
-    document.getElementById("fileBadge").textContent = "Agent Ready";
-    toast("✅ Transcribed — confirm steps below", "success");
+    _showAgentPanel(job, data.suggestions, lang, data.duration_secs, data.word_count);
+    job.status = "done";
+    _setJobMsg(job, "✓ Transcribed — confirm the steps below");
+    renderFileJob(job);
+    syncFileJob(job);
 
   } catch (err) {
-    toast("Agent error: " + err.message, "error");
-    document.getElementById("fileBadge").textContent = "Error";
-    document.getElementById("resultsEmpty").style.display = "flex";
-  } finally {
-    prog.style.display = "none";
-    pmsg.style.display = "none";
-    btn.disabled = false;
+    job.status = "error";
+    job.error = err.message || String(err);
+    _setJobMsg(job, "⚠️ " + job.error, true);
+    syncFileJob(job);
   }
 }
 
-function _showAgentPanel(suggestions, lang, durationSecs, wordCount) {
+function _showAgentPanel(job, suggestions, lang, durationSecs, wordCount) {
+  const host = document.getElementById(job.id + "-agent");
+  if (!host) return;
+  host.innerHTML = "";
+
   const panel = document.createElement("div");
-  panel.id = "agentPanel";
+  panel.id = job.id + "-agentPanel";
   panel.style.cssText = `
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 14px;
     padding: 18px 20px;
-    margin: 14px 0;
   `;
 
   const info = durationSecs
-    ? `<div style="font-size:11px;color:var(--text3);margin-bottom:12px">
-         ⏱ ~${durationSecs}s · ${wordCount} words
-       </div>`
+    ? `<div style="font-size:11px;color:var(--text3);margin-bottom:12px">⏱ ~${durationSecs}s · ${wordCount} words</div>`
     : "";
 
   panel.innerHTML = `
@@ -1412,7 +1683,7 @@ function _showAgentPanel(suggestions, lang, durationSecs, wordCount) {
     <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
       ${suggestions.map(s => `
         <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px">
-          <input type="checkbox" id="agent-chk-${s.tool}" ${s.enabled ? "checked" : ""}
+          <input type="checkbox" id="${job.id}-agent-chk-${s.tool}" ${s.enabled ? "checked" : ""}
             style="width:15px;height:15px;margin-top:2px;accent-color:var(--accent);cursor:pointer;flex-shrink:0">
           <span>
             <strong>${_agentToolLabel(s.tool)}</strong>
@@ -1421,35 +1692,34 @@ function _showAgentPanel(suggestions, lang, durationSecs, wordCount) {
         </label>
       `).join("")}
     </div>
-    <button onclick="_agentRun('${lang}')" style="
+    <button onclick="_agentRun('${job.id}','${escapeHtml(lang)}')" style="
       background:var(--accent);color:#fff;border:none;border-radius:8px;
       padding:10px 0;font-size:13px;font-weight:600;cursor:pointer;width:100%;
     ">▶ Run Selected</button>
   `;
-
-  // Insert after dropzone
-  const dropZone = document.getElementById("dropZone");
-  if (dropZone) dropZone.parentNode.insertBefore(panel, dropZone.nextSibling);
+  host.appendChild(panel);
 }
 
 function _agentToolLabel(tool) {
   return { translate: "🌐 Translate", summarize: "📝 Summarize", sentiment: "😊 Sentiment", diarize: "👥 Speaker Detection" }[tool] || tool;
 }
 
-async function _agentRun(lang) {
-  const runTranslate = document.getElementById("agent-chk-translate")?.checked || false;
-  const runSummarize = document.getElementById("agent-chk-summarize")?.checked || false;
-  const runSentiment = document.getElementById("agent-chk-sentiment")?.checked || false;
+async function _agentRun(jobId, lang) {
+  const job = _findFileJob(jobId);
+  if (!job) return;
+  const r = job.results;
 
-  const prog = document.getElementById("fileProgress");
-  const pmsg = document.getElementById("fileProgressMsg");
-  prog.style.display = "block";
-  pmsg.style.display = "block";
-  pmsg.textContent   = "🤖 Running selected tools…";
-  document.getElementById("fileBadge").textContent = "Processing…";
+  const chk = (tool) => document.getElementById(job.id + "-agent-chk-" + tool)?.checked || false;
+  const runTranslate = chk("translate");
+  const runSummarize = chk("summarize");
+  const runSentiment = chk("sentiment");
 
-  // Disable run button
-  const runBtn = document.querySelector("#agentPanel button");
+  job.status = "running";
+  _setJobMsg(job, "🤖 Running selected tools…");
+  syncFileJob(job);
+
+  const panel = document.getElementById(job.id + "-agentPanel");
+  const runBtn = panel?.querySelector("button");
   if (runBtn) { runBtn.disabled = true; runBtn.textContent = "Running…"; }
 
   try {
@@ -1457,8 +1727,8 @@ async function _agentRun(lang) {
       method:  "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
-        transcript:      agentTranscript,
-        detected_lang:   agentDetectedLang,
+        transcript:      r.transcript,
+        detected_lang:   r.detectedLang,
         target_language: lang,
         run_translate:   runTranslate,
         run_summarize:   runSummarize,
@@ -1469,89 +1739,39 @@ async function _agentRun(lang) {
     if (!res.ok) throw new Error("Agent run failed");
     const data = await res.json();
 
-    // Show translation
     if (data.translation) {
       applyRTL(lang);
-      const cardId = `card-trans-${lang.replace(/\s|\(|\)/g, "_")}`;
-      const bodyId = `res-trans-${lang.replace(/\s|\(|\)/g, "_")}`;
-      addTranslationCard(lang, cardId, bodyId);
-      const el = document.getElementById(bodyId);
-      if (el) el.textContent = data.translation;
-      fileResults.translations[lang] = data.translation;
+      r.translations[lang] = data.translation;
+      r.processedLang = lang;
     }
+    if (data.summary) r.summary = data.summary;
+    if (data.sentiment) r.sentiment = data.sentiment;
 
-    // Show summary
-    if (data.summary) {
-      fileResults.summary = data.summary;
-      showCard("summary", data.summary);
-    }
+    job.status = "done";
+    _setJobMsg(job, "✓ Complete");
+    renderFileJob(job);
+    syncFileJob(job);
+    saveFileHistory(job.name, lang, r.transcript, data.translation || "");
 
-    // Show sentiment
-    if (data.sentiment) {
-      const sData = data.sentiment;
-      const card  = document.getElementById("card-sentiment-file");
-      const body  = document.getElementById("res-sentiment-file");
-      if (card && body) {
-        const emoji = EMOTION_EMOJI[sData.emotion] || "😐";
-        const color = SENTIMENT_COLOR[sData.sentiment] || "var(--text)";
-        body.innerHTML = `
-          <div style="display:flex;align-items:center;gap:14px">
-            <span style="font-size:32px">${emoji}</span>
-            <div style="flex:1">
-              <div style="font-weight:600;color:${color};text-transform:capitalize">${sData.sentiment} · ${sData.emotion}</div>
-              <div style="font-size:12px;color:var(--text2);margin-top:3px">${escapeHtml(sData.summary)}</div>
-              ${sData.key_phrases?.length ? `<div style="margin-top:8px">${sData.key_phrases.map(p=>`<span class="phrase-tag">${escapeHtml(p)}</span>`).join("")}</div>` : ""}
-            </div>
-            <span style="font-size:22px;font-weight:700;color:${color}">${Math.round(sData.score*100)}%</span>
-          </div>`;
-        card.style.display = "block";
-      }
-    }
-
-    document.getElementById("downloadGroup").style.display = "flex";
-    document.getElementById("fileBadge").textContent = "Done";
-    toast("🤖 Agent done! ✓", "success");
-    saveFileHistory(selectedFile.name, lang, agentTranscript, data.translation || "");
-
-    // Remove panel
-    const panel = document.getElementById("agentPanel");
     if (panel) panel.remove();
 
   } catch (err) {
-    toast("Agent error: " + err.message, "error");
-    document.getElementById("fileBadge").textContent = "Error";
+    job.status = "error";
+    job.error = err.message || String(err);
+    _setJobMsg(job, "⚠️ " + job.error, true);
+    syncFileJob(job);
     if (runBtn) { runBtn.disabled = false; runBtn.textContent = "▶ Run Selected"; }
-  } finally {
-    prog.style.display = "none";
-    pmsg.style.display = "none";
   }
 }
 
-// ── Global RAG state ─────────────────────────────────────────────
-let ragSessionId   = "";
-let ragLanguage    = "English";
-let ragChatHistory = [];
-
-// ── Show Keywords & Topics ────────────────────────────────────────
-function showKeywords(kwData) {
-  if (!kwData) return;
-
-  // Remove old if exists
-  const old = document.getElementById("keywordsCard");
-  if (old) old.remove();
-
+// ── Keywords & Topics (returns a card element; the caller places it) ──
+function _buildKeywordsCard(kwData) {
+  if (!kwData) return null;
   const { topics = [], keywords = [], tag = "" } = kwData;
-  if (!topics.length && !keywords.length) return;
+  if (!topics.length && !keywords.length) return null;
 
   const card = document.createElement("div");
-  card.id = "keywordsCard";
-  card.style.cssText = `
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 16px 18px;
-    margin: 12px 0;
-  `;
+  card.className = "result-card";
 
   const topicTags = topics.map(t => `
     <span style="
@@ -1566,7 +1786,7 @@ function showKeywords(kwData) {
 
   const kwTags = keywords.map(k => `
     <span style="
-      background: var(--surface2, var(--border));
+      background: var(--bg3);
       color: var(--text);
       border-radius: 20px;
       padding: 3px 10px;
@@ -1576,23 +1796,21 @@ function showKeywords(kwData) {
   `).join("");
 
   card.innerHTML = `
-    ${tag ? `<div style="font-size:12px;color:var(--text2);margin-bottom:10px;font-style:italic">📌 ${escapeHtml(tag)}</div>` : ""}
-    ${topicTags ? `<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px">${topicTags}</div>` : ""}
-    ${kwTags    ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${kwTags}</div>` : ""}
+    <div class="result-card-head"><span>🏷️ Keywords & Topics</span></div>
+    <div class="result-card-body">
+      ${tag ? `<div style="font-size:12px;color:var(--text2);margin-bottom:10px;font-style:italic">📌 ${escapeHtml(tag)}</div>` : ""}
+      ${topicTags ? `<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px">${topicTags}</div>` : ""}
+      ${kwTags    ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${kwTags}</div>` : ""}
+    </div>
   `;
-
-  // Insert after transcript card
-  const transcriptCard = document.getElementById("card-transcript");
-  if (transcriptCard) {
-    transcriptCard.parentNode.insertBefore(card, transcriptCard.nextSibling);
-  }
+  return card;
 }
 
-// ── Initialize RAG after transcription ───────────────────────────
-async function ragStore(transcript, sessionId, lang) {
+// ── Initialize RAG after transcription (per file) ─────────────────
+async function ragStore(job, transcript, sessionId, lang) {
   if (!transcript || !sessionId) return;
-  ragSessionId = sessionId;
-  ragLanguage  = lang || "English";
+  job.results.ragSessionId = sessionId;
+  job.results.ragLanguage   = lang || "English";
 
   try {
     await fetch(`${API}/rag/store`, {
@@ -1604,113 +1822,93 @@ async function ragStore(transcript, sessionId, lang) {
         detected_lang: lang || "en",
       }),
     });
-    // Show chat UI after storing
-    showRagChat();
+    showRagChat(job);
   } catch (e) {
     console.warn("[RAG] Store failed:", e);
   }
 }
 
-// ── Show RAG Chat UI ──────────────────────────────────────────────
-function showRagChat() {
-  const old = document.getElementById("ragChatCard");
-  if (old) old.remove();
-
-  ragChatHistory = [];
+// ── RAG Chat UI, scoped to one file's card ────────────────────────
+function showRagChat(job) {
+  const host = document.getElementById(job.id + "-rag");
+  if (!host) return;
+  host.innerHTML = "";
 
   const card = document.createElement("div");
-  card.id = "ragChatCard";
-  card.style.cssText = `
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 16px 18px;
-    margin: 12px 0;
-  `;
-
+  card.className = "result-card";
   card.innerHTML = `
-    <div style="font-weight:600;font-size:14px;margin-bottom:12px;color:var(--accent)">
-      💬 Ask about this transcript
-    </div>
-    <div id="ragMessages" style="
-      max-height: 280px;
-      overflow-y: auto;
-      margin-bottom: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    ">
-      <div style="font-size:12px;color:var(--text2);text-align:center">
-        Ask anything about what was said in the audio
+    <div class="result-card-head"><span>💬 Ask about this transcript</span></div>
+    <div class="result-card-body" style="display:flex;flex-direction:column;gap:10px">
+      <div id="${job.id}-ragMessages" style="
+        max-height: 240px; overflow-y: auto;
+        display: flex; flex-direction: column; gap: 8px;
+      ">
+        <div style="font-size:12px;color:var(--text2);text-align:center">
+          Ask anything about what was said in the audio
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <input
+          id="${job.id}-ragInput"
+          type="text"
+          placeholder="e.g. What was the main topic?"
+          style="
+            flex:1;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 13px;
+            color: var(--text);
+            outline: none;
+            font-family: inherit;
+          "
+          onkeydown="if(event.key==='Enter') ragAsk('${job.id}')"
+        />
+        <button onclick="ragAsk('${job.id}')" style="
+          background: var(--accent);
+          color: #fff;
+          border: none;
+          border-radius: 8px;
+          padding: 8px 16px;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          white-space: nowrap;
+        ">Ask</button>
       </div>
     </div>
-    <div style="display:flex;gap:8px">
-      <input
-        id="ragInput"
-        type="text"
-        placeholder="e.g. What was the main topic?"
-        style="
-          flex:1;
-          background: var(--bg);
-          border: 1px solid var(--border);
-          border-radius: 8px;
-          padding: 8px 12px;
-          font-size: 13px;
-          color: var(--text);
-          outline: none;
-        "
-        onkeydown="if(event.key==='Enter') ragAsk()"
-      />
-      <button onclick="ragAsk()" style="
-        background: var(--accent);
-        color: #fff;
-        border: none;
-        border-radius: 8px;
-        padding: 8px 16px;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-        white-space: nowrap;
-      ">Ask</button>
-    </div>
   `;
-
-  // Insert at bottom of output area
-  const outputArea = document.getElementById("resultsBody") ||
-                     document.querySelector(".output-area");
-  if (outputArea) {
-    outputArea.appendChild(card);
-    setTimeout(() => card.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
-  }
+  host.appendChild(card);
 }
 
-// ── Ask RAG question ──────────────────────────────────────────────
-async function ragAsk() {
-  const input = document.getElementById("ragInput");
+// ── Ask RAG question about a specific file ────────────────────────
+async function ragAsk(jobId) {
+  const job = _findFileJob(jobId);
+  if (!job) return;
+  const input = document.getElementById(job.id + "-ragInput");
   const question = input?.value?.trim();
   if (!question) return;
-  if (!ragSessionId) { toast("Please process a file first", "error"); return; }
+  const sessionId = job.results.ragSessionId;
+  if (!sessionId) { toast("Process this file first", "error"); return; }
 
   input.value = "";
   input.disabled = true;
 
-  // Add user message
-  _ragAddMessage("user", question);
-
-  // Assistant message we stream tokens into
-  const msgId = "rag-" + Date.now();
-  _ragAddMessage("assistant", "…", msgId);
+  _ragAddMessage(job, "user", question);
+  const msgId = job.id + "-rag-" + Date.now();
+  _ragAddMessage(job, "assistant", "…", msgId);
   const msgEl = document.getElementById(msgId);
-  const box   = document.getElementById("ragMessages");
+  const box   = document.getElementById(job.id + "-ragMessages");
 
   try {
     const res = await fetch(`${API}/rag/ask/stream`, {
       method:  "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
-        session_id: ragSessionId,
+        session_id: sessionId,
         question:   question,
-        language:   ragLanguage,
+        language:   job.results.ragLanguage || "English",
       }),
     });
     if (!res.ok || !res.body) throw new Error("RAG request failed");
@@ -1745,8 +1943,8 @@ async function ragAsk() {
   }
 }
 
-function _ragAddMessage(role, text, id) {
-  const container = document.getElementById("ragMessages");
+function _ragAddMessage(job, role, text, id) {
+  const container = document.getElementById(job.id + "-ragMessages");
   if (!container) return;
 
   const isUser = role === "user";
@@ -1755,7 +1953,7 @@ function _ragAddMessage(role, text, id) {
   div.style.cssText = `
     max-width: 85%;
     align-self: ${isUser ? "flex-end" : "flex-start"};
-    background: ${isUser ? "var(--accent)" : "var(--bg)"};
+    background: ${isUser ? "var(--accent)" : "var(--bg3)"};
     color: ${isUser ? "#fff" : "var(--text)"};
     border-radius: ${isUser ? "12px 12px 2px 12px" : "12px 12px 12px 2px"};
     padding: 8px 12px;
@@ -1772,73 +1970,284 @@ function _ragAddMessage(role, text, id) {
    STUDY ASSISTANT — PolyglotAI v5.3
    ════════════════════════════════════════════════════════════════ */
 
-let studySessionId   = "";
+let studyJobs        = [];
+let _studySeq        = 0;
+let _studyBusy       = false;
+let activeStudyJobId = null;
+let studySessionId   = "";   // session id of the document open in the chat workspace
+
+const STUDY_EXTS = ["pdf", "docx", "doc", "txt"];
+const STUDY_MAX  = 20 * 1024 * 1024;
 
 function onStudyDragOver(e)  { e.preventDefault(); document.getElementById("studyDropZone").classList.add("drag-over"); }
 function onStudyDragLeave()  { document.getElementById("studyDropZone").classList.remove("drag-over"); }
-function onStudyDrop(e)      { e.preventDefault(); onStudyDragLeave(); const f = e.dataTransfer.files[0]; if(f) handleStudyFile(f); }
-function onStudyZoneClick(e) { if(e.target.id==="studyFileInput") return; document.getElementById("studyFileInput").click(); }
-function onStudyFileSelect(e){ const f = e.target.files[0]; if(f) handleStudyFile(f); }
+function onStudyDrop(e)      { e.preventDefault(); onStudyDragLeave(); addStudyFiles(e.dataTransfer.files); }
+function onStudyZoneClick(e) { if (e.target.id === "studyFileInput") return; document.getElementById("studyFileInput").click(); }
+function onStudyFileSelect(e){ addStudyFiles(e.target.files); e.target.value = ""; }
 
-function handleStudyFile(file) {
-  const allowed = ["pdf","docx","doc","txt"];
-  const ext = file.name.split(".").pop().toLowerCase();
-  if (!allowed.includes(ext)) { toast("Use PDF, DOCX, or TXT files", "error"); return; }
-  const dz = document.getElementById("studyDropZone");
-  dz.classList.add("has-file");
-  document.getElementById("studyDropMain").textContent = "✓ " + file.name;
-  const btn = document.getElementById("studyUploadBtn");
-  btn.disabled = false;
-  btn._file = file;
+function addStudyFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const rejected = [];
+  files.forEach(f => {
+    const ext = (f.name.split(".").pop() || "").toLowerCase();
+    if (!STUDY_EXTS.includes(ext)) { rejected.push(`${f.name} (.${ext || "?"})`); return; }
+    if (f.size > STUDY_MAX)         { rejected.push(`${f.name} — over 20MB`); return; }
+    studyJobs.push(_newStudyJob(f));
+  });
+  renderStudyJobs();
+  if (studyJobs.length) {
+    document.getElementById("studyDropZone").classList.add("has-file");
+    document.getElementById("studyDropMain").textContent =
+      `✓ ${studyJobs.length} file${studyJobs.length === 1 ? "" : "s"} ready`;
+  }
+  if (rejected.length) {
+    toast(`Skipped ${rejected.length}: ${rejected.slice(0, 2).join(", ")}${rejected.length > 2 ? "…" : ""}`, "error");
+  }
 }
 
-async function studyUpload() {
-  const btn  = document.getElementById("studyUploadBtn");
-  const file = btn._file;
-  if (!file) { toast("Please select a file first", "error"); return; }
+function _newStudyJob(file) {
+  return {
+    id: "sjob" + (++_studySeq),
+    file, name: file.name, size: file.size,
+    status: "queued", error: "", collapsed: false,
+    sessionId: "", summary: "", keywords: null, wordCount: 0, charCount: 0,
+    root: null,
+  };
+}
 
-  btn.disabled = true;
-  btn.textContent = "Processing…";
-  document.getElementById("studyBadge").textContent = "Analyzing…";
-  document.getElementById("studyBadge").className = "rec-badge recording";
-  document.getElementById("studyProgress").style.display = "block";
-  document.getElementById("studyProgressMsg").style.display = "block";
-  document.getElementById("studyProgressMsg").textContent = "📖 Extracting and analyzing your material…";
-  document.getElementById("studyOutput").style.display = "none";
-  document.getElementById("studyEmpty").style.display = "none";
+/* ── Per-document result card ───────────────────────────────────── */
+function _buildStudyJobCard(job) {
+  const el = document.createElement("div");
+  el.className = "file-job is-queued";
+  el.id = job.id;
+  el.innerHTML = `
+    <div class="file-job-head" onclick="toggleStudyJob('${job.id}')">
+      <span class="fj-icon">📄</span>
+      <div class="fj-meta">
+        <div class="fj-name" title="${escapeHtml(job.name)}">${escapeHtml(job.name)}</div>
+        <div class="fj-sub" id="${job.id}-sub">${_fmtBytes(job.size)}</div>
+      </div>
+      <span class="fj-status queued" id="${job.id}-status">Queued</span>
+      <div class="fj-actions">
+        <button type="button" class="fj-btn" title="Remove this document" onclick="event.stopPropagation();removeStudyJob('${job.id}')">✕</button>
+      </div>
+    </div>
+    <div class="file-job-body" id="${job.id}-body">
+      <div class="fj-msg" id="${job.id}-msg" style="display:none"></div>
+      <div class="sj-stats" id="${job.id}-stats" style="display:none">
+        <div><div class="sj-stat-n" id="${job.id}-words">—</div><div class="sj-stat-l">words</div></div>
+        <div><div class="sj-stat-n" id="${job.id}-chars" style="color:var(--purple)">—</div><div class="sj-stat-l">characters</div></div>
+      </div>
+      <div class="topics-strip" id="${job.id}-topics" style="display:none"></div>
+      <div class="result-card" id="${job.id}-card-summary" style="display:none">
+        <div class="result-card-head">
+          <span>📝 AI Summary</span>
+          <button type="button" class="icon-action" onclick="copyText('${job.id}-res-summary')">${ICON_COPY}</button>
+        </div>
+        <div class="result-card-body" id="${job.id}-res-summary"></div>
+      </div>
+      <div>
+        <button type="button" class="sj-activate" id="${job.id}-activate"
+          onclick="activateStudyJob('${job.id}')" style="display:none">💬 Study this material</button>
+      </div>
+    </div>`;
+  job.root = el;
+  return el;
+}
+
+function renderStudyJobs() {
+  const host  = document.getElementById("studyJobs");
+  const panel = document.getElementById("studyQueuePanel");
+  const list  = document.getElementById("studyQueueList");
+  const empty = document.getElementById("studyEmpty");
+  if (!host || !list || !panel || !empty) return;
+
+  const n = studyJobs.length;
+  panel.style.display = n ? "block" : "none";
+  empty.style.display = n ? "none" : "flex";
+  host.style.display  = n ? "flex" : "none";
+  document.getElementById("studyQueueCount").textContent = `${n} file${n === 1 ? "" : "s"}`;
+
+  list.innerHTML = studyJobs.map(j => `
+    <div class="queue-row is-${j.status}" title="${escapeHtml(j.error || j.name)}">
+      <span class="qr-dot"></span>
+      <span class="qr-name">${escapeHtml(j.name)}</span>
+      <span class="qr-size">${_fmtBytes(j.size)}</span>
+      <button type="button" class="qr-remove" title="Remove" onclick="removeStudyJob('${j.id}')">×</button>
+    </div>`).join("");
+
+  studyJobs.forEach(j => { if (!j.root) host.appendChild(_buildStudyJobCard(j)); });
+  Array.from(host.children).forEach(node => {
+    if (!studyJobs.some(j => j.id === node.id)) node.remove();
+  });
+  studyJobs.forEach(renderStudyJob);
+  _updateStudyControls();
+}
+
+function syncStudyJob(job) {
+  if (job.root) job.root.className = "file-job is-" + job.status + (job.collapsed ? " collapsed" : "");
+  const st = document.getElementById(job.id + "-status");
+  if (st) { st.className = "fj-status " + job.status; st.textContent = _statusLabel(job.status); }
+  const list = document.getElementById("studyQueueList");
+  if (list) {
+    const row = Array.from(list.children).find(r => r.querySelector(".qr-name")?.textContent === job.name);
+    if (row) row.className = "queue-row is-" + job.status;
+  }
+  _updateStudyControls();
+}
+
+function renderStudyJob(job) {
+  if (!job.root) return;
+  job.root.className = "file-job is-" + job.status + (job.collapsed ? " collapsed" : "");
+
+  const bits = [_fmtBytes(job.size)];
+  if (job.wordCount) bits.push(job.wordCount.toLocaleString() + " words");
+  const sub = document.getElementById(job.id + "-sub");
+  if (sub) sub.textContent = bits.join(" · ");
+
+  const st = document.getElementById(job.id + "-status");
+  if (st) { st.className = "fj-status " + job.status; st.textContent = _statusLabel(job.status); }
+
+  const stats = document.getElementById(job.id + "-stats");
+  if (stats) {
+    stats.style.display = job.status === "done" ? "flex" : "none";
+    const w = document.getElementById(job.id + "-words");
+    const c = document.getElementById(job.id + "-chars");
+    if (w) w.textContent = job.wordCount.toLocaleString();
+    if (c) c.textContent = job.charCount.toLocaleString();
+  }
+
+  _renderStudyTopics(job);
+
+  const card = document.getElementById(job.id + "-card-summary");
+  if (card) card.style.display = job.summary ? "block" : "none";
+  const body = document.getElementById(job.id + "-res-summary");
+  if (body && job.summary && body.textContent !== job.summary) body.textContent = job.summary;
+
+  const act = document.getElementById(job.id + "-activate");
+  if (act) {
+    act.style.display = job.sessionId ? "inline-block" : "none";
+    const isActive = activeStudyJobId === job.id;
+    act.className = "sj-activate" + (isActive ? " active" : "");
+    act.textContent = isActive ? "✓ Open in workspace" : "💬 Study this material";
+  }
+}
+
+function _studyMsg(job, text, isErr) {
+  const el = document.getElementById(job.id + "-msg");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "fj-msg" + (isErr ? " err" : "");
+  el.style.display = text ? "flex" : "none";
+}
+
+function toggleStudyJob(id) {
+  const job = studyJobs.find(j => j.id === id);
+  if (!job) return;
+  job.collapsed = !job.collapsed;
+  job.root.className = "file-job is-" + job.status + (job.collapsed ? " collapsed" : "");
+}
+
+function removeStudyJob(id) {
+  const i = studyJobs.findIndex(j => j.id === id);
+  if (i === -1) return;
+  if (studyJobs[i].status === "running") { toast("That document is still processing", "error"); return; }
+  const [gone] = studyJobs.splice(i, 1);
+  if (gone.root) gone.root.remove();
+  if (activeStudyJobId === id) _resetStudyWorkspace();
+  if (!studyJobs.length) {
+    document.getElementById("studyDropZone").classList.remove("has-file");
+    document.getElementById("studyDropMain").textContent = "Drop PDF, DOCX, or TXT files";
+  }
+  renderStudyJobs();
+}
+
+function clearStudyJobs() {
+  if (_studyBusy) { toast("Wait for the current batch to finish", "error"); return; }
+  studyJobs.forEach(j => j.root && j.root.remove());
+  studyJobs = [];
+  _resetStudyWorkspace();
+  document.getElementById("studyDropZone").classList.remove("has-file");
+  document.getElementById("studyDropMain").textContent = "Drop PDF, DOCX, or TXT files";
+  renderStudyJobs();
+}
+
+function _updateStudyControls() {
+  const btn   = document.getElementById("studyUploadBtn");
+  const label = document.getElementById("studyUploadBtnLabel");
+  const badge = document.getElementById("studyBadge");
+  const total = studyJobs.length;
+  const pending = studyJobs.filter(j => j.status === "queued" || j.status === "error").length;
+  const done    = studyJobs.filter(j => j.status === "done").length;
+
+  if (label) label.textContent = total > 1 ? `Analyze All (${pending} of ${total})` : "Analyze Material";
+  if (btn) btn.disabled = _studyBusy || !total;
+  if (badge) {
+    badge.textContent = _studyBusy ? "Analyzing…"
+      : !total ? "Idle"
+      : `${done}/${total} ready`;
+    badge.className = "rec-badge";
+  }
+}
+
+/* ── Batch analysis ─────────────────────────────────────────────── */
+async function studyUploadAll() {
+  if (_studyBusy) return;
+  if (!studyJobs.length) { toast("Please add one or more documents first", "error"); return; }
+  const queue = studyJobs.filter(j => j.status === "queued" || j.status === "error");
+  if (!queue.length) { toast("Every document has been analyzed ✓", "success"); return; }
+
+  const prog = document.getElementById("studyProgress");
+  const pmsg = document.getElementById("studyProgressMsg");
+  _studyBusy = true;
+  prog.style.display = "block";
+  pmsg.style.display = "block";
+  _updateStudyControls();
+
+  let ok = 0, failed = 0;
+  for (let i = 0; i < queue.length; i++) {
+    pmsg.textContent = `Analyzing ${i + 1} of ${queue.length} — ${queue[i].name}`;
+    const good = await _studyOneJob(queue[i]);
+    if (good) ok++; else failed++;
+  }
+
+  prog.style.display = "none";
+  pmsg.style.display = "none";
+  _studyBusy = false;
+  renderStudyJobs();
+  loadStudyDocuments();   // refresh the saved-documents list
+
+  if (failed === 0)  toast(`All ${ok} document${ok === 1 ? "" : "s"} analyzed ✓`, "success");
+  else if (ok === 0) toast(`All ${failed} document${failed === 1 ? "" : "s"} failed`, "error");
+  else               toast(`${ok} analyzed, ${failed} failed`, "error");
+}
+
+async function _studyOneJob(job) {
+  job.status = "running";
+  job.error = "";
+  job.collapsed = false;
+  _studyMsg(job, "📖 Extracting and analyzing your material…");
+  syncStudyJob(job);
 
   try {
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", job.file);
     const res = await fetch(`${API}/study/upload`, { method: "POST", headers: authHeaders(), body: fd });
-    if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Upload failed"); }
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || "Upload failed"); }
     const data = await res.json();
 
-    studySessionId = data.session_id;
+    job.sessionId = data.session_id;
+    job.summary   = data.summary || "";
+    job.keywords  = data.keywords || null;
+    job.wordCount = data.word_count || 0;
+    job.charCount = data.char_count || 0;
+    job.status    = "done";
 
-    // Show stats
-    document.getElementById("studyStats").style.display = "block";
-    document.getElementById("studyWordCount").textContent = data.word_count.toLocaleString();
-    document.getElementById("studyCharCount").textContent = data.char_count.toLocaleString();
-    document.getElementById("studyFilenameLabel").textContent = data.filename;
+    _studyMsg(job, "✓ Ready — open it in the workspace to chat");
+    renderStudyJob(job);
+    syncStudyJob(job);
 
-    // Show output section
-    document.getElementById("studyOutput").style.display = "flex";
-
-    // Keywords
-    _renderStudyKeywords(data.keywords);
-
-    // Summary
-    document.getElementById("studySummaryText").textContent = data.summary;
-
-    // Reset chat
-    document.getElementById("studyChatMessages").innerHTML = `
-      <div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">
-        📚 Material ready — ask anything about it!
-      </div>`;
-
-    document.getElementById("studyBadge").textContent = "Ready";
-    document.getElementById("studyBadge").className = "rec-badge";
     await _pushHistory({
       date: new Date().toLocaleString(),
       lang: "Study Assistant",
@@ -1848,32 +2257,78 @@ async function studyUpload() {
       source: "study",
       filename: data.filename
     });
-
-    loadStudyDocuments();   // refresh the saved-documents list
-    toast("✅ Material analyzed — start asking questions!", "success");
+    return true;
 
   } catch (err) {
-    toast("Error: " + err.message, "error");
-    document.getElementById("studyEmpty").style.display = "flex";
-    document.getElementById("studyBadge").textContent = "Error";
-    document.getElementById("studyBadge").className = "rec-badge";
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3z"/></svg> Analyze Material`;
-    document.getElementById("studyProgress").style.display = "none";
-    document.getElementById("studyProgressMsg").style.display = "none";
+    job.status = "error";
+    job.error = err.message || String(err);
+    _studyMsg(job, "⚠️ " + job.error, true);
+    renderStudyJob(job);
+    syncStudyJob(job);
+    return false;
   }
 }
 
-let studyKeywords = null;   // last document's { topics, keywords, tag } — used by the mind map
+/* ── Active document: drives the shared chat / quiz / flashcards ── */
+function activateStudyJob(id) {
+  const job = studyJobs.find(j => j.id === id);
+  if (!job || !job.sessionId) { toast("Analyze this document first", "error"); return; }
 
-function _renderStudyKeywords(kw) {
-  studyKeywords = kw || {};
-  const strip = document.getElementById("studyTopicsStrip");
+  activeStudyJobId = id;
+  studySessionId   = job.sessionId;
+  studyQuiz  = { questions: [], answers: [], submitted: false };
+  studyFlash = null;
+  _hideStudyQuiz();
+  _hideStudyFlashcards();
+
+  document.getElementById("studyOutput").style.display = "flex";
+  document.getElementById("studyEmpty").style.display  = "none";
+
+  const nameEl = document.getElementById("studyActiveDocName");
+  if (nameEl) nameEl.textContent = job.name;
+  const fn = document.getElementById("studyFilenameLabel");
+  if (fn) fn.textContent = job.name;
+
+  document.getElementById("studySummaryText").textContent = job.summary || "";
+  document.getElementById("studyChatMessages").innerHTML = `
+    <div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">
+      📚 “${escapeHtml(job.name)}” is ready — ask anything about it!
+    </div>`;
+
+  const stats = document.getElementById("studyStats");
+  if (stats) stats.style.display = "block";
+  document.getElementById("studyWordCount").textContent = job.wordCount.toLocaleString();
+  document.getElementById("studyCharCount").textContent = job.charCount.toLocaleString();
+
+  renderStudyJobs();
+  document.getElementById("studyOutput").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function _resetStudyWorkspace() {
+  activeStudyJobId = null;
+  studySessionId  = "";
+  studyQuiz  = { questions: [], answers: [], submitted: false };
+  studyFlash = null;
+  const out = document.getElementById("studyOutput");
+  if (out) out.style.display = "none";
+  _hideStudyQuiz();
+  _hideStudyFlashcards();
+  const stats = document.getElementById("studyStats");
+  if (stats) stats.style.display = "none";
+  const fn = document.getElementById("studyFilenameLabel");
+  if (fn) fn.textContent = "";
+  const nameEl = document.getElementById("studyActiveDocName");
+  if (nameEl) nameEl.textContent = "";
+  const sum = document.getElementById("studySummaryText");
+  if (sum) sum.textContent = "";
+}
+
+function _renderStudyTopics(job) {
+  const strip = document.getElementById(job.id + "-topics");
   if (!strip) return;
-
-  const topics   = (studyKeywords.topics   || []);
-  const keywords = (studyKeywords.keywords || []);
+  const kw = job.keywords || {};
+  const topics   = kw.topics   || [];
+  const keywords = kw.keywords || [];
 
   if (!topics.length && !keywords.length) {
     strip.style.display = "none";
@@ -1881,24 +2336,25 @@ function _renderStudyKeywords(kw) {
     return;
   }
 
-  // Show up to 3 top topics as a strip; clicking anything opens the full mind map.
+  // Show up to 3 top topics; anything opens the full mind map for this document.
   const top3 = topics.slice(0, 3);
-  const chips = top3.map(t =>
-    `<button type="button" class="topic-chip" onclick="openConceptMap()">${escapeHtml(t)}</button>`).join("");
-
   strip.style.display = "flex";
   strip.innerHTML = `
     <span class="topics-strip-label">Key topics</span>
-    ${chips}
-    <button type="button" class="topics-map-btn" onclick="openConceptMap()">🧠 Concept map</button>`;
+    ${top3.map(t => `<button type="button" class="topic-chip" onclick="openConceptMap('${job.id}')">${escapeHtml(t)}</button>`).join("")}
+    <button type="button" class="topics-map-btn" onclick="openConceptMap('${job.id}')">🧠 Concept map</button>`;
 }
 
-/* ── Concept mind-map modal ───────────────────────────────────────── */
-function openConceptMap() {
+/* ── Concept mind-map modal (per document) ─────────────────────── */
+function openConceptMap(jobId) {
+  const job = studyJobs.find(j => j.id === jobId);
   const overlay = document.getElementById("conceptMapOverlay");
   const canvas  = document.getElementById("conceptMapCanvas");
-  if (!overlay || !canvas || !studyKeywords) return;
-  canvas.innerHTML = _buildConceptMap(studyKeywords);
+  if (!overlay || !canvas || !job || !job.keywords) {
+    toast("Analyze this document first", "error");
+    return;
+  }
+  canvas.innerHTML = _buildConceptMap(job.keywords);
   overlay.style.display = "flex";
   document.body.style.overflow = "hidden";
 }
@@ -1984,7 +2440,15 @@ async function openStudyDocument(sid) {
     if (!res.ok) { toast("Could not open document", "error"); return; }
     const data = await res.json();
 
-    studySessionId = data.session_id;
+    // A reopened saved document is not part of the current batch — it just
+    // becomes the document the shared chat / quiz / workspace is bound to.
+    activeStudyJobId = null;
+    studySessionId   = data.session_id;
+    studyQuiz  = { questions: [], answers: [], submitted: false };
+    studyFlash = null;
+    _hideStudyQuiz();
+    _hideStudyFlashcards();
+
     document.getElementById("studyEmpty").style.display  = "none";
     document.getElementById("studyOutput").style.display = "flex";
     document.getElementById("studyStats").style.display  = "block";
@@ -1992,15 +2456,15 @@ async function openStudyDocument(sid) {
     document.getElementById("studyCharCount").textContent = (data.char_count || 0).toLocaleString();
     const fn = document.getElementById("studyFilenameLabel");
     if (fn) fn.textContent = data.filename || "";
+    const nameEl = document.getElementById("studyActiveDocName");
+    if (nameEl) nameEl.textContent = data.filename || "Saved document";
 
-    _renderStudyKeywords(data.keywords);
     document.getElementById("studySummaryText").textContent = data.summary || "";
     document.getElementById("studyChatMessages").innerHTML = `
       <div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">
         📚 Reopened “${escapeHtml(data.filename || "document")}” — ask anything about it!
       </div>`;
-    document.getElementById("studyBadge").textContent = "Ready";
-    document.getElementById("studyBadge").className   = "rec-badge";
+    _updateStudyControls();
     toast("📄 Document reopened", "success");
   } catch { toast("Could not open document", "error"); }
 }
@@ -2009,7 +2473,7 @@ async function studyAsk() {
   const input    = document.getElementById("studyChatInput");
   const question = input?.value?.trim();
   if (!question) return;
-  if (!studySessionId) { toast("Please upload a file first", "error"); return; }
+  if (!studySessionId) { toast("Open a document in the workspace first", "error"); return; }
 
   input.value    = "";
   input.disabled = true;
@@ -2078,7 +2542,7 @@ function _addStudyMsg(role, text, id) {
 function studyQuickAsk(text) {
   const input = document.getElementById("studyChatInput");
   if (!input) return;
-  if (!studySessionId) { toast("Please upload a file first", "error"); return; }
+  if (!studySessionId) { toast("Open a document in the workspace first", "error"); return; }
   input.value = text;
   studyAsk();
 }
@@ -2089,7 +2553,7 @@ function studyQuickAsk(text) {
 let studyQuiz = { questions: [], answers: [], submitted: false };
 
 async function startStudyQuiz() {
-  if (!studySessionId) { toast("Upload a document first", "error"); return; }
+  if (!studySessionId) { toast("Open a document in the workspace first", "error"); return; }
   const card = document.getElementById("studyQuizCard");
   const body = document.getElementById("studyQuizBody");
   const btn  = document.getElementById("studyQuizBtn");
@@ -2179,8 +2643,12 @@ function submitStudyQuiz() {
   toast(`${msg} Score: ${score}/${total}`, pct >= 70 ? "success" : "");
 }
 
-function closeStudyQuiz() {
-  document.getElementById("studyQuizCard").style.display = "none";
+function closeStudyQuiz() { _hideStudyQuiz(); }
+function _hideStudyQuiz() {
+  const card = document.getElementById("studyQuizCard");
+  if (card) card.style.display = "none";
+  const score = document.getElementById("studyQuizScore");
+  if (score) score.style.display = "none";
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -2199,7 +2667,7 @@ function _saveFlash() {
 }
 
 async function startStudyFlashcards() {
-  if (!studySessionId) { toast("Upload a document first", "error"); return; }
+  if (!studySessionId) { toast("Open a document in the workspace first", "error"); return; }
   const card = document.getElementById("studyFlashcardsCard");
   card.style.display = "block";
   card.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -2325,8 +2793,12 @@ function newFlashDeck() {
   _fetchFlashDeck();
 }
 
-function closeStudyFlashcards() {
-  document.getElementById("studyFlashcardsCard").style.display = "none";
+function closeStudyFlashcards() { _hideStudyFlashcards(); }
+function _hideStudyFlashcards() {
+  const card = document.getElementById("studyFlashcardsCard");
+  if (card) card.style.display = "none";
+  const prog = document.getElementById("studyFlashProgress");
+  if (prog) prog.style.display = "none";
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -2357,20 +2829,8 @@ function toggleSidebar() {
    Paste at bottom of script.js
    ════════════════════════════════════════════════════════════════ */
 
-// ── 1. Language Confidence Display ───────────────────────────────
-function showLanguageConfidence(lang, confidence) {
-  const el = document.getElementById("fileDetectedLang");
-  if (!el) return;
-  if (confidence !== null && confidence !== undefined) {
-    el.innerHTML = `Detected: <strong>${lang.toUpperCase()}</strong> <span style="color:var(--green2);font-size:11px">${confidence}% confident</span>`;
-  } else {
-    el.textContent = `Detected: ${lang.toUpperCase()}`;
-  }
-}
-
-
-// ── 2. Auto-Chapters ──────────────────────────────────────────────
-async function generateChapters(segments, transcript) {
+// ── 2. Auto-Chapters (per file) ───────────────────────────────────
+async function generateChapters(job, segments, transcript) {
   if (!segments || segments.length < 5) return;
 
   try {
@@ -2382,21 +2842,17 @@ async function generateChapters(segments, transcript) {
     if (!res.ok) return;
     const data = await res.json();
     if (data.chapters && data.chapters.length > 1) {
-      showChapters(data.chapters);
+      job.results.chapters = data.chapters;
+      renderFileJob(job);
     }
   } catch (e) {
     console.warn("[Chapters] Failed:", e);
   }
 }
 
-function showChapters(chapters) {
-  // Remove old card if exists
-  document.getElementById("chaptersCard")?.remove();
-
+function _buildChaptersCard(chapters) {
   const card = document.createElement("div");
-  card.id = "chaptersCard";
   card.className = "result-card";
-  card.style.cssText = "margin-bottom:0";
 
   const items = chapters.map((ch, i) => `
     <div style="display:flex;align-items:center;gap:12px;padding:8px 0;${i < chapters.length-1 ? 'border-bottom:1px solid var(--border)' : ''}">
@@ -2405,7 +2861,7 @@ function showChapters(chapters) {
         border-radius:6px;padding:3px 8px;font-size:11px;
         font-weight:700;font-family:'JetBrains Mono',monospace;
         white-space:nowrap;min-width:44px;text-align:center;
-      ">${ch.time_fmt}</span>
+      ">${escapeHtml(ch.time_fmt)}</span>
       <span style="font-size:13px;color:var(--text)">${escapeHtml(ch.title)}</span>
     </div>
   `).join("");
@@ -2417,20 +2873,12 @@ function showChapters(chapters) {
     </div>
     <div class="result-card-body" style="padding:4px 16px">${items}</div>
   `;
-
-  // Insert after transcript card
-  const transcriptCard = document.getElementById("card-transcript");
-  if (transcriptCard) {
-    transcriptCard.parentNode.insertBefore(card, transcriptCard.nextSibling);
-  } else {
-    const resultsBody = document.getElementById("resultsBody") || document.querySelector(".output-area");
-    if (resultsBody) resultsBody.prepend(card);
-  }
+  return card;
 }
 
 
-// ── 3. Speaker Profiling ──────────────────────────────────────────
-async function generateSpeakerProfiles(diarizedSegments) {
+// ── 3. Speaker Profiling (per file) ──────────────────────────────
+async function generateSpeakerProfiles(job, diarizedSegments) {
   if (!diarizedSegments || diarizedSegments.length < 2) return;
 
   // Check if multiple speakers
@@ -2448,15 +2896,16 @@ async function generateSpeakerProfiles(diarizedSegments) {
     });
     if (!res.ok) return;
     const data = await res.json();
-    if (data.profiles) showSpeakerProfiles(data.profiles);
+    if (data.profiles) {
+      job.results.profiles = data.profiles;
+      renderFileJob(job);
+    }
   } catch (e) {
     console.warn("[Profiling] Failed:", e);
   }
 }
 
-function showSpeakerProfiles(profiles) {
-  document.getElementById("speakerProfilesCard")?.remove();
-
+function _buildSpeakerCard(profiles) {
   const SPEAKER_COLORS = ["var(--purple)", "var(--green2)", "var(--amber)", "#63b3ed"];
 
   const cards = Object.entries(profiles).map(([speaker, profile], i) => {
@@ -2469,7 +2918,7 @@ function showSpeakerProfiles(profiles) {
       <div style="padding:14px;background:var(--bg3);border-radius:10px;border:1px solid var(--border);margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
           <div style="width:32px;height:32px;border-radius:50%;background:${color}22;border:2px solid ${color};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:${color}">
-            ${speaker.replace("Speaker ", "")}
+            ${escapeHtml(speaker.replace("Speaker ", ""))}
           </div>
           <div>
             <div style="font-weight:600;font-size:13px;color:var(--text)">${escapeHtml(speaker)}</div>
@@ -2483,7 +2932,6 @@ function showSpeakerProfiles(profiles) {
   }).join("");
 
   const card = document.createElement("div");
-  card.id = "speakerProfilesCard";
   card.className = "result-card";
   card.innerHTML = `
     <div class="result-card-head">
@@ -2492,8 +2940,5 @@ function showSpeakerProfiles(profiles) {
     </div>
     <div class="result-card-body">${cards}</div>
   `;
-
-  // Insert after diarization card or transcript
-  const outputArea = document.getElementById("resultsBody") || document.querySelector(".output-area");
-  if (outputArea) outputArea.appendChild(card);
+  return card;
 }

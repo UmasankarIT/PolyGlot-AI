@@ -644,17 +644,28 @@
       <div class="page-header">
         <div class="page-title"><span class="label-dot purple"></span>File Translation</div>
         <div style="display:flex;align-items:center;gap:10px">
-          <span class="detected-lang" id="fileDetectedLang"></span>
           <span class="rec-badge" id="fileBadge">Idle</span>
         </div>
       </div>
       <div class="content-grid">
         <div class="control-panel">
           <div class="drop-zone" id="dropZone" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)" onclick="onDropZoneClick(event)">
-            <input type="file" id="fileInput" accept="audio/*, .mp4" style="display:none" onchange="onFileSelect(event)" onclick="event.stopPropagation()"/>
+            <input type="file" id="fileInput" accept="audio/*, .mp4" multiple style="display:none" onchange="onFileSelect(event)" onclick="event.stopPropagation()"/>
             <div class="drop-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zm-2 7l-3-3h2v-4h2v4h2l-3 3z"/></svg></div>
-            <div class="drop-main" id="dropMain">Drop audio file or click to browse</div>
-            <div class="drop-sub">MP3 · WAV · M4A · WebM · OGG — max 100MB</div>
+            <div class="drop-main" id="dropMain">Drop audio files or click to browse</div>
+            <div class="drop-sub">MP3 · WAV · M4A · WebM · OGG — select many, max 100MB each</div>
+          </div>
+
+          <!-- Selected file queue (multi-file) -->
+          <div class="queue-panel" id="fileQueuePanel" style="display:none">
+            <div class="queue-head">
+              <span id="fileQueueCount">0 files</span>
+              <span style="display:flex;gap:6px">
+                <button type="button" class="queue-clear" onclick="toggleAllFileJobs()">Expand / collapse</button>
+                <button type="button" class="queue-clear" onclick="clearFileJobs()">Clear all</button>
+              </span>
+            </div>
+            <div id="fileQueueList"></div>
           </div>
           <div class="divider"></div>
           <div class="field-group">
@@ -687,21 +698,13 @@
               <button type="button" class="toggle" id="tog-sentiment" onclick="toggleOption('sentiment')">Sentiment</button>
             </div>
           </div>
-          <button type="button" class="btn-primary" id="processBtn" onclick="processFile()">
+          <button type="button" class="btn-primary" id="processBtn" onclick="processAllFiles()">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            Process File
+            <span id="processBtnLabel">Process All</span>
           </button>
           <button type="button" class="btn-secondary" id="agentBtn" onclick="agentAnalyze()" style="margin:0 16px 8px;display:flex;align-items:center;justify-content:center;gap:8px;">
               🤖 Smart Analyze
           </button>
-          <div class="download-group" id="downloadGroup" style="display:none">
-            <button type="button" class="btn-secondary" onclick="downloadTxt()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zm-2 7l-3-3h2v-4h2v4h2l-3 3z"/></svg>TXT</button>
-            <button type="button" class="btn-secondary" onclick="downloadPDFFile()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg>PDF</button>
-            <details class="download-options" id="downloadOptions">
-              <summary>Include in download…</summary>
-              <div id="downloadOptionsList"></div>
-            </details>
-          </div>
         </div>
         <div class="output-area">
           <div class="progress-bar" id="fileProgress" style="display:none"><div class="progress-fill"></div></div>
@@ -709,21 +712,10 @@
           <div class="results-body" id="resultsBody">
             <div class="results-empty" id="resultsEmpty">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13z"/></svg>
-              <p>Upload a file and click Process</p>
+              <p>Add one or more audio files and click Process All</p>
             </div>
-            <div class="result-card" id="card-transcript" style="display:none">
-              <div class="result-card-head"><span>Transcript</span><button type="button" class="icon-action" onclick="copyText('res-transcript')"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg></button></div>
-              <div class="result-card-body" id="res-transcript"></div>
-            </div>
-            <div id="translations-container"></div>
-            <div class="result-card" id="card-summary" style="display:none">
-              <div class="result-card-head"><span>AI Summary</span><button type="button" class="icon-action" onclick="copyText('res-summary')"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg></button></div>
-              <div class="result-card-body" id="res-summary"></div>
-            </div>
-            <div class="result-card" id="card-sentiment-file" style="display:none">
-              <div class="result-card-head"><span>Sentiment Analysis</span></div>
-              <div class="result-card-body" id="res-sentiment-file"></div>
-            </div>
+            <!-- One result card per file is built here by script.js -->
+            <div id="fileJobs" style="display:none;flex-direction:column;gap:14px"></div>
           </div>
         </div>
       </div>
@@ -830,22 +822,31 @@
             ondragleave="onStudyDragLeave()"
             ondrop="onStudyDrop(event)"
             onclick="onStudyZoneClick(event)">
-            <input type="file" id="studyFileInput" accept=".pdf,.docx,.doc,.txt"
+            <input type="file" id="studyFileInput" accept=".pdf,.docx,.doc,.txt" multiple
               style="display:none" onchange="onStudyFileSelect(event)" onclick="event.stopPropagation()"/>
             <div class="drop-icon">
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zM5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82z"/>
               </svg>
             </div>
-            <div class="drop-main" id="studyDropMain">Drop PDF, DOCX, or TXT</div>
-            <div class="drop-sub">PDF · DOCX · TXT — max 20MB</div>
+            <div class="drop-main" id="studyDropMain">Drop PDF, DOCX, or TXT files</div>
+            <div class="drop-sub">PDF · DOCX · TXT — select many, max 20MB each</div>
+          </div>
+
+          <!-- Selected document queue (multi-file) -->
+          <div class="queue-panel" id="studyQueuePanel" style="display:none">
+            <div class="queue-head">
+              <span id="studyQueueCount">0 files</span>
+              <button type="button" class="queue-clear" onclick="clearStudyJobs()">Clear all</button>
+            </div>
+            <div id="studyQueueList"></div>
           </div>
 
           <div class="divider"></div>
 
-          <button type="button" class="btn-primary" id="studyUploadBtn" onclick="studyUpload()" disabled>
+          <button type="button" class="btn-primary" id="studyUploadBtn" onclick="studyUploadAll()" disabled>
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3z"/></svg>
-            Analyze Material
+            <span id="studyUploadBtnLabel">Analyze All</span>
           </button>
 
           <!-- My Documents (persisted, per-user) -->
@@ -857,9 +858,9 @@
             <div id="studyDocsList" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto"></div>
           </div>
 
-          <!-- Stats -->
+          <!-- Stats for the document currently open in the chat workspace -->
           <div id="studyStats" style="display:none;margin-top:12px;padding:12px;background:var(--bg3);border-radius:10px;border:1px solid var(--border)">
-            <div style="font-size:11px;color:var(--text3);margin-bottom:6px;font-weight:600">DOCUMENT INFO</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:6px;font-weight:600">ACTIVE DOCUMENT</div>
             <div style="display:flex;gap:16px">
               <div>
                 <div style="font-size:18px;font-weight:700;color:var(--accent)" id="studyWordCount">—</div>
@@ -882,14 +883,19 @@
           <!-- Empty state -->
           <div class="results-empty" id="studyEmpty">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zM5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82z"/></svg>
-            <p>Upload a document to start studying</p>
+            <p>Add one or more documents to start studying</p>
           </div>
 
-          <!-- Results -->
+          <!-- Per-document results: one card per file, built by script.js -->
+          <div id="studyJobs" style="display:none;flex-direction:column;gap:12px"></div>
+
+          <!-- Shared interactive workspace (chat / quiz / flashcards) for the active document -->
           <div id="studyOutput" style="display:none;flex-direction:column;gap:12px">
 
-            <!-- Key Topics (up to 3) — click to open the mind map -->
-            <div id="studyTopicsStrip" class="topics-strip" style="display:none"></div>
+            <div class="study-active-doc" id="studyActiveDocBar">
+              <span class="sad-label">Interactive workspace for</span>
+              <strong class="sad-name" id="studyActiveDocName"></strong>
+            </div>
 
             <!-- Summary -->
             <div class="result-card resizable-card" id="studySummaryCard">
@@ -922,7 +928,7 @@
                   display:flex;flex-direction:column;gap:10px;
                 ">
                   <div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">
-                    📚 Upload a document to start chatting
+                    📚 Pick a document above to start chatting
                   </div>
                 </div>
                 <div class="study-suggestions" id="studySuggestions">
@@ -995,8 +1001,8 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<script src="live_realtime.js?v=65"></script>
-<script src="script.js?v=65"></script>
+<script src="live_realtime.js?v=66"></script>
+<script src="script.js?v=66"></script>
 
 <script>
 /* ── Resizable Cards ────────────────────────────────────────── */
