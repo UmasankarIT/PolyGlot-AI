@@ -6,12 +6,13 @@ const API = (window.location.hostname === "localhost" || window.location.hostnam
 const RTL_LANGS = new Set(["Arabic", "Hebrew", "Urdu"]);
 
 const ROUTE_CONFIG = {
-  live:         { title: "PolyglotAI — Live Translate",  path: "/live" },
-  conversation: { title: "PolyglotAI — Conversation",    path: "/conversation" },
-  file:         { title: "PolyglotAI — File Upload",     path: "/file" },
-  sentiment:    { title: "PolyglotAI — Sentiment AI",    path: "/sentiment" },
-  study:        { title: "PolyglotAI — Study Assistant", path: "/study" },
-  history:      { title: "PolyglotAI — History",         path: "/history" }
+  live:          { title: "PolyglotAI — Live Translate",   path: "/live" },
+  conversation:  { title: "PolyglotAI — Conversation",     path: "/conversation" },
+  file:          { title: "PolyglotAI — File Upload",      path: "/file" },
+  sentiment:     { title: "PolyglotAI — Sentiment AI",     path: "/sentiment" },
+  study:         { title: "PolyglotAI — Study Assistant",  path: "/study" },
+  "study/agent": { title: "PolyglotAI — Study AI Agent",   path: "/study/agent" },
+  history:       { title: "PolyglotAI — History",          path: "/history" }
 };
 const VALID_TABS = Object.keys(ROUTE_CONFIG);
 let _pendingTab = null;
@@ -19,11 +20,16 @@ let _pendingTab = null;
 function getTabFromUrl() {
   let path = (window.location.pathname || "").toLowerCase().replace(/^\/+|\/+$/g, "");
   if (path.startsWith("frontend/")) path = path.replace(/^frontend\//, "");
+
+  if (path === "study/agent" || path === "study-agent") return "study/agent";
+
   const segment = path.split("/")[0];
   if (VALID_TABS.includes(segment)) return segment;
 
-  const hash = (window.location.hash || "").replace(/^#\/?/, "").toLowerCase().split("/")[0];
-  if (VALID_TABS.includes(hash)) return hash;
+  const hash = (window.location.hash || "").replace(/^#\/?/, "").toLowerCase().split("?")[0];
+  if (hash === "study/agent" || hash === "study-agent") return "study/agent";
+  const hashSegment = hash.split("/")[0];
+  if (VALID_TABS.includes(hashSegment)) return hashSegment;
 
   return null;
 }
@@ -121,10 +127,11 @@ function applyTheme(theme) {
 function switchTab(name, updateHistory = true) {
   if (!VALID_TABS.includes(name)) name = "live";
 
+  const sanitized = name.replace("/", "-");
   document.querySelectorAll(".nav-item").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
-  const navEl  = document.getElementById("nav-" + name);
-  const pageEl = document.getElementById("page-" + name);
+  const navEl  = document.getElementById("nav-" + sanitized) || document.getElementById("nav-" + name) || (name.startsWith("study") ? document.getElementById("nav-study") : null);
+  const pageEl = document.getElementById("page-" + sanitized) || document.getElementById("page-" + name);
   if (navEl)  navEl.classList.add("active");
   if (pageEl) pageEl.classList.add("active");
 
@@ -146,7 +153,8 @@ function switchTab(name, updateHistory = true) {
     }
   }
 
-  if (name === "study" && typeof loadStudyDocuments === "function") loadStudyDocuments();
+  if ((name === "study" || name === "study/agent") && typeof loadStudyDocuments === "function") loadStudyDocuments();
+  if (name === "study/agent" && typeof updateAgentDocSelector === "function") updateAgentDocSelector();
 }
 
 /* ── Browser back/forward navigation ──────────────────────────── */
@@ -2371,7 +2379,7 @@ async function _studyOneJob(job) {
   }
 }
 
-/* ── Active document: drives the shared chat / quiz / flashcards ── */
+/* ── Active document: drives the dedicated Study Agent chatbot ── */
 function activateStudyJob(id) {
   const job = studyJobs.find(j => j.id === id);
   if (!job || !job.sessionId) { toast("Analyze this document first", "error"); return; }
@@ -2383,27 +2391,131 @@ function activateStudyJob(id) {
   _hideStudyQuiz();
   _hideStudyFlashcards();
 
-  document.getElementById("studyOutput").style.display = "flex";
-  document.getElementById("studyEmpty").style.display  = "none";
-
-  const nameEl = document.getElementById("studyActiveDocName");
-  if (nameEl) nameEl.textContent = job.name;
-  const fn = document.getElementById("studyFilenameLabel");
-  if (fn) fn.textContent = job.name;
-
-  document.getElementById("studySummaryText").textContent = job.summary || "";
-  document.getElementById("studyChatMessages").innerHTML = `
-    <div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">
-      📚 “${escapeHtml(job.name)}” is ready — ask anything about it!
-    </div>`;
-
-  const stats = document.getElementById("studyStats");
-  if (stats) stats.style.display = "block";
-  document.getElementById("studyWordCount").textContent = job.wordCount.toLocaleString();
-  document.getElementById("studyCharCount").textContent = job.charCount.toLocaleString();
-
+  _syncAgentActiveDoc(job.name, job.wordCount, job.charCount);
   renderStudyJobs();
-  document.getElementById("studyOutput").scrollIntoView({ behavior: "smooth", block: "start" });
+  switchTab("study/agent");
+}
+
+function _syncAgentActiveDoc(name, wordCount, charCount) {
+  const titleEl = document.getElementById("agentActiveDocTitle");
+  if (titleEl) titleEl.textContent = name || "Document";
+  const statsEl = document.getElementById("agentActiveDocStats");
+  if (statsEl) {
+    const bits = [];
+    if (wordCount) bits.push(Number(wordCount).toLocaleString() + " words");
+    if (charCount) bits.push(Number(charCount).toLocaleString() + " chars");
+    bits.push("Naive RAG session active");
+    statsEl.textContent = bits.join(" · ");
+  }
+  const ragStatus = document.getElementById("agentRagStatus");
+  if (ragStatus) {
+    ragStatus.textContent = "Grounded Context Ready";
+    ragStatus.style.background = "rgba(29,158,117,0.15)";
+    ragStatus.style.color = "var(--green2)";
+  }
+
+  const msgs = document.getElementById("studyChatMessages");
+  if (msgs) {
+    msgs.innerHTML = `
+      <div style="max-width:88%;align-self:flex-start;background:var(--bg3);border:1px solid var(--border);border-radius:14px 14px 14px 3px;padding:14px 16px;font-size:13px;line-height:1.6;color:var(--text);margin-bottom:4px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:18px">🤖</span>
+          <strong style="color:var(--purple);font-size:13px">Study AI Agent</strong>
+        </div>
+        <div>
+          I have indexed <strong>${escapeHtml(name)}</strong> into my Naive RAG context. Ask me to explain concepts, extract key points, provide real-world examples, or generate practice questions!
+        </div>
+      </div>
+    `;
+  }
+
+  updateAgentDocSelector();
+}
+
+function updateAgentDocSelector() {
+  const sel = document.getElementById("agentDocSelect");
+  if (!sel) return;
+
+  const options = [];
+  studyJobs.filter(j => j.sessionId).forEach(j => {
+    options.push({ id: j.sessionId, name: j.name, isJob: true, jobId: j.id });
+  });
+
+  if (window._cachedSavedDocs && Array.isArray(window._cachedSavedDocs)) {
+    window._cachedSavedDocs.forEach(d => {
+      if (!options.some(o => o.id === d.session_id)) {
+        options.push({ id: d.session_id, name: d.filename || "Saved Doc", isJob: false });
+      }
+    });
+  }
+
+  if (!options.length) {
+    sel.innerHTML = `<option value="">No document selected</option>`;
+    return;
+  }
+
+  sel.innerHTML = options.map(o => {
+    const selected = (studySessionId === o.id) ? "selected" : "";
+    return `<option value="${escapeHtml(o.id)}" ${selected} data-job-id="${o.jobId || ''}">${escapeHtml(o.name)}</option>`;
+  }).join("");
+
+  // Auto-activate first document if none is active
+  if (!studySessionId && options.length > 0) {
+    if (options[0].isJob) activateStudyJob(options[0].jobId);
+    else openStudyDocument(options[0].id);
+  }
+}
+
+function onAgentDocSelectChange(sid) {
+  if (!sid) return;
+  const sel = document.getElementById("agentDocSelect");
+  const opt = sel ? sel.options[sel.selectedIndex] : null;
+  const jobId = opt ? opt.getAttribute("data-job-id") : null;
+
+  if (jobId) {
+    activateStudyJob(jobId);
+  } else {
+    openStudyDocument(sid);
+    switchTab("study/agent");
+  }
+}
+
+async function onAgentDirectFile(e) {
+  const files = Array.from(e.target.files || []);
+  if (!files.length) return;
+  const file = files[0];
+  e.target.value = "";
+
+  const ext = file.name.split(".").pop().toLowerCase();
+  if (!["pdf", "docx", "doc", "txt"].includes(ext)) {
+    toast("Unsupported file type. Use PDF, DOCX, or TXT.", "error");
+    return;
+  }
+
+  const job = {
+    id: "sj-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+    file: file,
+    name: file.name,
+    size: file.size,
+    status: "queued",
+    summary: "",
+    keywords: null,
+    sessionId: "",
+    wordCount: 0,
+    charCount: 0,
+    error: ""
+  };
+  studyJobs.push(job);
+
+  _addStudyMsg("user", `📎 Uploading document: ${file.name}`);
+  _addStudyMsg("assistant", `⏳ Ingesting and extracting text from "${file.name}"…`);
+
+  const ok = await _studyOneJob(job);
+  if (ok) {
+    activateStudyJob(job.id);
+  } else {
+    _addStudyMsg("assistant", `⚠️ Failed to process "${file.name}": ${job.error || "Please try again"}`);
+  }
 }
 
 function _resetStudyWorkspace() {
@@ -2411,18 +2523,19 @@ function _resetStudyWorkspace() {
   studySessionId  = "";
   studyQuiz  = { questions: [], answers: [], submitted: false };
   studyFlash = null;
-  const out = document.getElementById("studyOutput");
-  if (out) out.style.display = "none";
   _hideStudyQuiz();
   _hideStudyFlashcards();
-  const stats = document.getElementById("studyStats");
-  if (stats) stats.style.display = "none";
-  const fn = document.getElementById("studyFilenameLabel");
-  if (fn) fn.textContent = "";
-  const nameEl = document.getElementById("studyActiveDocName");
-  if (nameEl) nameEl.textContent = "";
-  const sum = document.getElementById("studySummaryText");
-  if (sum) sum.textContent = "";
+
+  const titleEl = document.getElementById("agentActiveDocTitle");
+  if (titleEl) titleEl.textContent = "No document loaded";
+  const statsEl = document.getElementById("agentActiveDocStats");
+  if (statsEl) statsEl.textContent = "Upload or select a document to start chatting with grounded Naive RAG";
+  const ragStatus = document.getElementById("agentRagStatus");
+  if (ragStatus) {
+    ragStatus.textContent = "Awaiting Document";
+    ragStatus.style.background = "var(--bg4)";
+    ragStatus.style.color = "var(--text3)";
+  }
 }
 
 function _renderStudyTopics(job) {
@@ -2515,6 +2628,8 @@ async function loadStudyDocuments() {
     const res = await fetch(`${API}/study/list`, { headers: authHeaders() });
     if (!res.ok) { section.style.display = "none"; return; }
     const docs = (await res.json()).documents || [];
+    window._cachedSavedDocs = docs;
+    if (typeof updateAgentDocSelector === "function") updateAgentDocSelector();
     if (!docs.length) { section.style.display = "none"; return; }
 
     section.style.display = "block";
@@ -2542,8 +2657,6 @@ async function openStudyDocument(sid) {
     if (!res.ok) { toast("Could not open document", "error"); return; }
     const data = await res.json();
 
-    // A reopened saved document is not part of the current batch — it just
-    // becomes the document the shared chat / quiz / workspace is bound to.
     activeStudyJobId = null;
     studySessionId   = data.session_id;
     studyQuiz  = { questions: [], answers: [], submitted: false };
@@ -2551,23 +2664,10 @@ async function openStudyDocument(sid) {
     _hideStudyQuiz();
     _hideStudyFlashcards();
 
-    document.getElementById("studyEmpty").style.display  = "none";
-    document.getElementById("studyOutput").style.display = "flex";
-    document.getElementById("studyStats").style.display  = "block";
-    document.getElementById("studyWordCount").textContent = (data.word_count || 0).toLocaleString();
-    document.getElementById("studyCharCount").textContent = (data.char_count || 0).toLocaleString();
-    const fn = document.getElementById("studyFilenameLabel");
-    if (fn) fn.textContent = data.filename || "";
-    const nameEl = document.getElementById("studyActiveDocName");
-    if (nameEl) nameEl.textContent = data.filename || "Saved document";
-
-    document.getElementById("studySummaryText").textContent = data.summary || "";
-    document.getElementById("studyChatMessages").innerHTML = `
-      <div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">
-        📚 Reopened “${escapeHtml(data.filename || "document")}” — ask anything about it!
-      </div>`;
+    _syncAgentActiveDoc(data.filename || "Saved document", data.word_count || 0, data.char_count || 0);
     _updateStudyControls();
-    toast("📄 Document reopened", "success");
+    toast("📄 Document loaded into Agent", "success");
+    switchTab("study/agent");
   } catch { toast("Could not open document", "error"); }
 }
 
