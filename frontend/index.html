@@ -6,6 +6,13 @@
   <title>PolyglotAI — Real-Time Speech Translator</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <script>
+    (function() {
+      const base = document.createElement("base");
+      base.href = window.location.pathname.includes("/frontend/") ? "/frontend/" : "/";
+      document.head.prepend(base);
+    })();
+  </script>
   <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
@@ -368,7 +375,7 @@
 
   <!-- SIDEBAR -->
   <aside class="sidebar">
-    <div class="sidebar-logo">
+    <div class="sidebar-logo" onclick="switchTab('live')" style="cursor:pointer;" title="Go to Live Translate">
       <div class="logo-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round">
           <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>

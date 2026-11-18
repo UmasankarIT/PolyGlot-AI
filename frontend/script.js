@@ -5,6 +5,29 @@ const API = (window.location.hostname === "localhost" || window.location.hostnam
 
 const RTL_LANGS = new Set(["Arabic", "Hebrew", "Urdu"]);
 
+const ROUTE_CONFIG = {
+  live:         { title: "PolyglotAI — Live Translate",  path: "/live" },
+  conversation: { title: "PolyglotAI — Conversation",    path: "/conversation" },
+  file:         { title: "PolyglotAI — File Upload",     path: "/file" },
+  sentiment:    { title: "PolyglotAI — Sentiment AI",    path: "/sentiment" },
+  study:        { title: "PolyglotAI — Study Assistant", path: "/study" },
+  history:      { title: "PolyglotAI — History",         path: "/history" }
+};
+const VALID_TABS = Object.keys(ROUTE_CONFIG);
+let _pendingTab = null;
+
+function getTabFromUrl() {
+  let path = (window.location.pathname || "").toLowerCase().replace(/^\/+|\/+$/g, "");
+  if (path.startsWith("frontend/")) path = path.replace(/^frontend\//, "");
+  const segment = path.split("/")[0];
+  if (VALID_TABS.includes(segment)) return segment;
+
+  const hash = (window.location.hash || "").replace(/^#\/?/, "").toLowerCase().split("/")[0];
+  if (VALID_TABS.includes(hash)) return hash;
+
+  return null;
+}
+
 /* ── State ─────────────────────────────────────────────────────── */
 let isLive            = false;
 let liveTimerInt      = null;
@@ -26,16 +49,22 @@ let authToken         = localStorage.getItem("polyglot_token") || "";
 let currentUser       = JSON.parse(localStorage.getItem("polyglot_user") || "null");
 
 /* ════════════════════════════════════════════════════════════════
-   BOOT
+   BOOT & ROUTER
    ════════════════════════════════════════════════════════════════ */
-function startApp() {
+function startApp(targetTab) {
   applyTheme(currentTheme);
   const splash = document.getElementById("splash");
-  splash.classList.add("hide");
+  if (splash) splash.classList.add("hide");
+  const tab = targetTab || _pendingTab || getTabFromUrl() || "live";
+  _pendingTab = tab;
+
   setTimeout(() => {
-    splash.style.display = "none";
-    if (!authToken) showAuthOverlay();
-    else launchApp();
+    if (splash) splash.style.display = "none";
+    if (!authToken && !localStorage.getItem("polyglot_guest")) {
+      showAuthOverlay();
+    } else {
+      launchApp(tab);
+    }
   }, 550);
 }
 
@@ -48,11 +77,11 @@ function launchApp(defaultTab) {
   if (!_healthInterval) _healthInterval = setInterval(checkHealth, 10000);
   registerKeyboardShortcuts();
   updateHistoryNudge();
-  initSplashWave();
-  if (!_appLaunched) {
-    _appLaunched = true;
-    switchTab(defaultTab || "live");
-  }
+
+  const tabToOpen = defaultTab || _pendingTab || getTabFromUrl() || "live";
+  _pendingTab = null;
+  _appLaunched = true;
+  switchTab(tabToOpen, true);
 }
 
 async function checkHealth() {
@@ -77,8 +106,6 @@ function initSplashWave() {
     });
   }, 120);
 }
-// Also run on page load for splash
-setTimeout(initSplashWave, 100);
 
 /* ── Theme ─────────────────────────────────────────────────────── */
 function toggleTheme() {
@@ -90,16 +117,85 @@ function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
 }
 
-/* ── Tab switching ─────────────────────────────────────────────── */
-function switchTab(name) {
+/* ── Tab switching & URL routing ───────────────────────────────── */
+function switchTab(name, updateHistory = true) {
+  if (!VALID_TABS.includes(name)) name = "live";
+
   document.querySelectorAll(".nav-item").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
   const navEl  = document.getElementById("nav-" + name);
   const pageEl = document.getElementById("page-" + name);
   if (navEl)  navEl.classList.add("active");
   if (pageEl) pageEl.classList.add("active");
+
+  const config = ROUTE_CONFIG[name];
+  if (config) {
+    document.title = config.title;
+    if (updateHistory) {
+      let currentPath = (window.location.pathname || "").toLowerCase().replace(/\/+$/, "") || "/";
+      if (currentPath.startsWith("/frontend")) {
+        const targetPath = "/frontend" + config.path;
+        if (currentPath !== targetPath) {
+          window.history.pushState({ tab: name }, config.title, targetPath);
+        }
+      } else {
+        if (currentPath !== config.path) {
+          window.history.pushState({ tab: name }, config.title, config.path);
+        }
+      }
+    }
+  }
+
   if (name === "study" && typeof loadStudyDocuments === "function") loadStudyDocuments();
 }
+
+/* ── Browser back/forward navigation ──────────────────────────── */
+window.addEventListener("popstate", (e) => {
+  const tab = (e.state && e.state.tab) || getTabFromUrl();
+  const splash = document.getElementById("splash");
+  const app = document.getElementById("app");
+
+  if (tab && VALID_TABS.includes(tab)) {
+    if (splash && splash.style.display !== "none") {
+      splash.style.display = "none";
+    }
+    if (app && app.style.display !== "flex") {
+      app.style.display = "flex";
+      _appLaunched = true;
+    }
+    switchTab(tab, false);
+  } else if (!tab) {
+    if (!_appLaunched && splash) {
+      splash.style.display = "block";
+      splash.classList.remove("hide");
+      if (app) app.style.display = "none";
+      document.title = "PolyglotAI — Real-Time Speech Translator";
+    } else {
+      switchTab("live", false);
+    }
+  }
+});
+
+/* ── Initial page load route resolution ───────────────────────── */
+(function initRouterOnLoad() {
+  applyTheme(currentTheme);
+  const tab = getTabFromUrl();
+
+  if (tab) {
+    _pendingTab = tab;
+    const splash = document.getElementById("splash");
+    if (splash) splash.style.display = "none";
+
+    if (!authToken && !localStorage.getItem("polyglot_guest")) {
+      document.getElementById("app").style.display = "flex";
+      showAuthOverlay();
+    } else {
+      launchApp(tab);
+    }
+  } else {
+    setTimeout(initSplashWave, 100);
+  }
+})();
 
 /* ── RTL ───────────────────────────────────────────────────────── */
 function applyRTL(lang) {
@@ -698,7 +794,7 @@ async function doLogin() {
     const data = await res.json();
     if (!res.ok) { showAuthError("loginError", data.detail || "Login failed"); return; }
     persistAuth(data);
-    launchApp();
+    launchApp(_pendingTab || getTabFromUrl() || "live");
     toast(`Welcome back, ${data.display_name || data.username}!`, "success");
   } catch { showAuthError("loginError", "Could not reach server"); }
   finally   { setAuthLoading("login", false); }
@@ -718,18 +814,24 @@ async function doRegister() {
     const data = await res.json();
     if (!res.ok) { showAuthError("registerError", data.detail || "Registration failed"); return; }
     persistAuth(data);
-    launchApp();
+    launchApp(_pendingTab || getTabFromUrl() || "live");
     toast(`Welcome, ${data.display_name || data.username}!`, "success");
   } catch { showAuthError("registerError", "Could not reach server"); }
   finally   { setAuthLoading("register", false); }
 }
 
-function skipAuth() { authToken = ""; currentUser = null; launchApp(); }
+function skipAuth() {
+  authToken = "";
+  currentUser = null;
+  localStorage.setItem("polyglot_guest", "true");
+  launchApp(_pendingTab || getTabFromUrl() || "live");
+}
 
 function doLogout() {
   authToken = ""; currentUser = null; _appLaunched = false;
   localStorage.removeItem("polyglot_token");
   localStorage.removeItem("polyglot_user");
+  localStorage.removeItem("polyglot_guest");
   updateUserWidget(); updateHistoryNudge(); renderHistory();
   toast("Signed out", "");
 }
